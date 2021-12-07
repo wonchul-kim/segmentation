@@ -89,6 +89,7 @@ class ConfusionMatrix:
         acc_global = torch.diag(h).sum() / h.sum()
         acc = torch.diag(h) / h.sum(1)
         iu = torch.diag(h) / (h.sum(1) + h.sum(0) - torch.diag(h))
+        
         return acc_global, acc, iu
 
     def reduce_from_all_processes(self):

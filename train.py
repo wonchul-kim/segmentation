@@ -12,10 +12,9 @@ from coco_utils import get_coco
 from torch import nn
 import json 
 import datetime 
-
+import wandb
 import warnings
 warnings.filterwarnings(action='ignore') 
-
 
 try:
     from torchvision.prototype import models as PM
@@ -58,6 +57,7 @@ def criterion(inputs, target):
 
 def evaluate(model, criterion, data_loader, device, num_classes):
     model.eval()
+    val_loss = 0
     confmat = utils.ConfusionMatrix(num_classes)
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = "Test:"
@@ -67,7 +67,6 @@ def evaluate(model, criterion, data_loader, device, num_classes):
             output = model(image)
 
             loss = criterion(output, target)
-
             output = output["out"]
 
             confmat.update(target.flatten(), output.argmax(1).flatten())
@@ -77,7 +76,7 @@ def evaluate(model, criterion, data_loader, device, num_classes):
     return confmat, loss
 
 
-def train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, device, epoch, print_freq):
+def train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, device, epoch, print_freq, wandb=None):
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value}"))
@@ -93,7 +92,10 @@ def train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, devi
 
         lr_scheduler.step()
 
+        # logging >>>
         metric_logger.update(loss=loss.item(), lr=optimizer.param_groups[0]["lr"])
+        if wandb != None:
+            wandb.log({"train_loss": loss.item(), "learning rate": optimizer.param_groups[0]["lr"]})
 
 
 def main(args, weights_path):
@@ -227,8 +229,7 @@ def main(args, weights_path):
             print(">>>> RELOAD ALL !!!!!!!!!!!!!!!!!!!!!!!!!!")
         print(">>>>>>> RELOAD MODEL", (not args.test_only))
 
-    if len(args.device_ids) > 1:
-        # model.backbone = torch.nn.DataParallel(model.backbone, device_ids=args.device_ids)
+    if len(args.device_ids) > 1: ## Important! Need to locate after parameter settings for optimization
         model = torch.nn.DataParallel(model, device_ids=args.device_ids)
 
     if args.test_only:
@@ -236,14 +237,37 @@ def main(args, weights_path):
         print(confmat)
         return
 
+    ### For wandb
+    if args.wandb:
+        wandb.init(project=args.project_name, reinit=True)
+        wandb.run.name = args.run_name
+        wandb.config.update(args)
+        wandb.watch(model)
+
+
     min_loss = 999
     info_weights = {'best': None, 'last': None}
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
-        train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, args.device, epoch, args.print_freq)
-        confmat, loss_val = evaluate(model, criterion, data_loader_test, device=args.device, num_classes=num_classes)
+        if args.wandb:
+            train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, args.device, epoch, args.print_freq, wandb)
+            confmat, loss_val = evaluate(model, criterion, data_loader_test, device=args.device, num_classes=num_classes)
+            
+            acc_global, acc, iu = confmat.compute()
+            wandb.log({"val_loss": loss_val.item()})
+            
+            for class_name, val in zip(args.classes, (iu*100).tolist()):
+                wandb.log({class_name + '_iou': val})
+            wandb.log({'mean iou': iu.mean().item()*100})
+            for class_name, val in zip(args.classes, (acc*100).tolist()):
+                wandb.log({class_name + '_acc': val})
+            
+        else:
+            train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, args.device, epoch, args.print_freq, None)
+            confmat, loss_val = evaluate(model, criterion, data_loader_test, device=args.device, num_classes=num_classes, wandb=None)
+        
         print(confmat)
         checkpoint = {
             "model": model_without_ddp.state_dict(),
@@ -252,6 +276,7 @@ def main(args, weights_path):
             "epoch": epoch,
             "args": args,
         }
+
         if min_loss > loss_val:
             min_loss = loss_val
             utils.save_on_master(checkpoint, os.path.join(weights_path, "best.pth"))
@@ -277,28 +302,22 @@ def get_args_parser(add_help=True):
     import argparse
 
     parser = argparse.ArgumentParser(description="PyTorch Segmentation Training", add_help=add_help)
-
+    
+    parser.add_argument('--project-name', default='interojo')
     # parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust')
     parser.add_argument('--data-path', default='/home/nvadmin/wonchul/mnt/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust', help='dataset path')
+    parser.add_argument('--wandb', default=True)
     parser.add_argument('--dataset-type', default='coco', help='dataset name')
     parser.add_argument("--model", default="deeplabv3_resnet101", type=str, help="model name")
     parser.add_argument("--aux-loss", action="store_true", help="auxiliar loss")
     parser.add_argument('--device', default='cuda', help='gpu device ids')
     parser.add_argument('--device-ids', default='2,3', help='gpu device ids')
-    parser.add_argument("--batch-size", default=4, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
+    parser.add_argument("--batch-size", default=64, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
     parser.add_argument("--epochs", default=300, type=int, metavar="N", help="number of total epochs to run")
     parser.add_argument("--num-workers", default=32, type=int, metavar="N", help="number of data loading workers (default: 16)")
     parser.add_argument("--lr", default=0.01, type=float, help="initial learning rate")
     parser.add_argument("--momentum", default=0.9, type=float, metavar="M", help="momentum")
-    parser.add_argument(
-        "--wd",
-        "--weight-decay",
-        default=1e-4,
-        type=float,
-        metavar="W",
-        help="weight decay (default: 1e-4)",
-        dest="weight_decay",
-    )
+    parser.add_argument("-weight-decay", default=1e-4, type=float, metavar="W", help="weight decay (default: 1e-4)", dest="weight_decay")
     parser.add_argument("--lr-warmup-epochs", default=0, type=int, help="the number of epochs to warmup (default: 0)")
     parser.add_argument("--lr-warmup-method", default="linear", type=str, help="the warmup method (default: linear)")
     parser.add_argument("--lr-warmup-decay", default=0.01, type=float, help="the decay for lr")
@@ -320,8 +339,8 @@ def get_args_parser(add_help=True):
 
     # Prototype models only
     parser.add_argument("--weights", default=None, type=str, help="the weights enum name to load")
-    parser.add_argument('--base-imgsz', default=1280, type=int, help='base image size')
-    parser.add_argument('--crop-imgsz', default=1280, type=int, help='base image size')
+    parser.add_argument('--base-imgsz', default=80, type=int, help='base image size')
+    parser.add_argument('--crop-imgsz', default=80, type=int, help='base image size')
 
     return parser
 
@@ -330,6 +349,7 @@ if __name__ == "__main__":
     args = get_args_parser().parse_args()
 
     args.device_ids = list(map(int, args.device_ids.split(',')))
+    args.classes = ['_background_'] + list(osp.split(osp.splitext(args.data_path)[0])[-1].split('_'))
     args.num_classes = len(list(osp.split(osp.splitext(args.data_path)[0])[-1].split('_'))) + 1
     if args.device == 'cuda':
         args.device = 'cuda:{}'.format(args.device_ids[0])
@@ -337,11 +357,11 @@ if __name__ == "__main__":
     now = datetime.datetime.now()
     if args.output_dir:
         if not os.path.exists(args.output_dir):
-            args.output_dir = os.path.join(args.output_dir, '1')
+            args.output_dir = os.path.join(args.output_dir, 'seg1')
             os.makedirs(args.output_dir)
         else:
             folders = os.listdir(args.output_dir)
-            args.output_dir = os.path.join(args.output_dir, str(len(folders) + 1))
+            args.output_dir = os.path.join(args.output_dir, 'seg' + str(len(folders) + 1))
             os.makedirs(args.output_dir)
 
         output_path = args.output_dir
@@ -350,6 +370,7 @@ if __name__ == "__main__":
         weights_path = osp.join(output_path, 'weights')
         utils.mkdir(weights_path)
 
+    args.run_name = osp.split(osp.splitext(output_path)[0])[-1]
     with open(osp.join(output_path, 'cfg/config.json'), 'w') as f:
         json.dump(args.__dict__, f, indent=2)
 
