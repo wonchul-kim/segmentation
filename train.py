@@ -13,6 +13,7 @@ from torch import nn
 import json 
 import datetime 
 import wandb
+from losses  import CELoss, FocalTverskyLoss
 import warnings
 warnings.filterwarnings(action='ignore') 
 
@@ -44,18 +45,10 @@ def get_dataset(dir_path, dataset_type, mode, transform, num_classes):
 def get_transform(train, base_size, crop_size):
     return presets.SegmentationPresetTrain(base_size, crop_size) if train else presets.SegmentationPresetEval(base_size)
 
-def criterion(inputs, target):
-    losses = {}
-    for name, x in inputs.items():
-        losses[name] = nn.functional.cross_entropy(x, target, ignore_index=255)
-
-    if len(losses) == 1:
-        return losses["out"]
-
-    return losses["out"] + 0.5 * losses["aux"]
 
 
-def evaluate(model, criterion, data_loader, device, num_classes):
+
+def evaluate(model, criterion, data_loader, device, num_classes, wandb=None):
     model.eval()
     val_loss = 0
     confmat = utils.ConfusionMatrix(num_classes)
@@ -138,7 +131,7 @@ def main(args, weights_path):
     train_sampler = torch.utils.data.RandomSampler(dataset)
     test_sampler = torch.utils.data.SequentialSampler(dataset_test)
 
-    data_loader = torch.utils.data.DataLoader(
+    data_loader_train = torch.utils.data.DataLoader(
         dataset, batch_size=args.batch_size,
         sampler=train_sampler, num_workers=args.num_workers,
         collate_fn=utils.collate_fn, drop_last=True)
@@ -149,11 +142,10 @@ def main(args, weights_path):
         collate_fn=utils.collate_fn)
 
     if not args.weights:
-        if args.model == 'deeplabv3_resnet101':
+        if args.pretrained:
             model = torchvision.models.segmentation.__dict__[args.model](
-                        pretrained=True,
+                        pretrained=args.pretrained,
                         aux_loss=args.aux_loss,
-                        # num_classes=num_classes
                     )       
             model.classifier = torchvision.models.segmentation.deeplabv3.DeepLabHead(2048, num_classes)
             model.aux_classifier[4] = torch.nn.Conv2d(256, num_classes, kernel_size=(1, 1), stride=(1, 1))
@@ -174,7 +166,6 @@ def main(args, weights_path):
 
     model.to(args.device)
 
-
     if args.distributed:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
@@ -193,10 +184,15 @@ def main(args, weights_path):
         params_to_optimize.append({"params": params, "lr": args.lr * 10})
     optimizer = torch.optim.SGD(params_to_optimize, lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 
-    iters_per_epoch = len(data_loader)
+    iters_per_epoch = len(data_loader_train)
     main_lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer, lambda x: (1 - x / (iters_per_epoch * (args.epochs - args.lr_warmup_epochs))) ** 0.9
     )
+
+    if args.loss == 'CE' or args.loss == 'CE_AUX':
+        criterion = CELoss(args.loss)
+    elif args.loss == 'FocalTv':
+        criterion = FocalTverskyLoss()
 
     if args.lr_warmup_epochs > 0:
         warmup_iters = iters_per_epoch * args.lr_warmup_epochs
@@ -252,7 +248,7 @@ def main(args, weights_path):
         if args.distributed:
             train_sampler.set_epoch(epoch)
         if args.wandb:
-            train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, args.device, epoch, args.print_freq, wandb)
+            train_one_epoch(model, criterion, optimizer, data_loader_train, lr_scheduler, args.device, epoch, args.print_freq, wandb)
             confmat, loss_val = evaluate(model, criterion, data_loader_test, device=args.device, num_classes=num_classes)
             
             acc_global, acc, iu = confmat.compute()
@@ -265,7 +261,7 @@ def main(args, weights_path):
                 wandb.log({class_name + '_acc': val})
             
         else:
-            train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, args.device, epoch, args.print_freq, None)
+            train_one_epoch(model, criterion, optimizer, data_loader_train, lr_scheduler, args.device, epoch, args.print_freq, None)
             confmat, loss_val = evaluate(model, criterion, data_loader_test, device=args.device, num_classes=num_classes, wandb=None)
         
         print(confmat)
@@ -306,13 +302,14 @@ def get_args_parser(add_help=True):
     parser.add_argument('--project-name', default='interojo')
     # parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust')
     parser.add_argument('--data-path', default='/home/nvadmin/wonchul/mnt/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust', help='dataset path')
-    parser.add_argument('--wandb', default=True)
+    parser.add_argument('--wandb', default=False)
+    parser.add_argument("--loss", default='FocalTv', help='CE | CE_AUX | FocalTv')
     parser.add_argument('--dataset-type', default='coco', help='dataset name')
     parser.add_argument("--model", default="deeplabv3_resnet101", type=str, help="model name")
     parser.add_argument("--aux-loss", action="store_true", help="auxiliar loss")
     parser.add_argument('--device', default='cuda', help='gpu device ids')
     parser.add_argument('--device-ids', default='2,3', help='gpu device ids')
-    parser.add_argument("--batch-size", default=64, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
+    parser.add_argument("--batch-size", default=256, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
     parser.add_argument("--epochs", default=300, type=int, metavar="N", help="number of total epochs to run")
     parser.add_argument("--num-workers", default=32, type=int, metavar="N", help="number of data loading workers (default: 16)")
     parser.add_argument("--lr", default=0.01, type=float, help="initial learning rate")
