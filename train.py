@@ -14,6 +14,7 @@ import json
 import datetime 
 import wandb
 
+from models import create_model
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from losses  import CELoss, DiceLoss
@@ -116,24 +117,7 @@ def main(args):
 
 
     ### SET MODEL -------------------------------------------------------------------------------------------------------
-    if not args.weights:
-        if args.pretrained:
-            if args.model == 'deeplabv3_resnet101':
-                model = torchvision.models.segmentation.__dict__[args.model](
-                            pretrained=args.pretrained,
-                            aux_loss=False#args.aux_loss,
-                        )       
-                model.classifier = torchvision.models.segmentation.deeplabv3.DeepLabHead(2048, num_classes)
-                model.aux_classifier[4] = torch.nn.Conv2d(256, num_classes, kernel_size=(1, 1), stride=(1, 1))
-        else:
-            model = torchvision.models.segmentation.__dict__[args.model](
-                pretrained=args.pretrained,
-                num_classes=num_classes,
-                aux_loss=args.aux_loss,
-            )
-        print(">>> LODED TORCHVISION MODEL: ", args.model)
-    
-
+    model = create_model(args)
 
     if args.distributed:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -270,7 +254,7 @@ def main(args):
 def get_args_parser(add_help=True):
     import argparse
 
-    parser = argparse.ArgumentParser(description="PyTorch Segmentation Training", add_help=add_help)
+    parser = argparse.ArgumentParser(description="PyTorch based semantic segmentation", add_help=add_help)
     
     parser.add_argument('--project-name', default='INTEROJO')
     # parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust')

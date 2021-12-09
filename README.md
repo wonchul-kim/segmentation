@@ -1,43 +1,22 @@
-# Semantic segmentation reference training scripts
+# For semantic segmentation
 
-This folder contains reference training scripts for semantic segmentation.
-They serve as a log of how to train specific models, as provide baseline
-training and evaluation scripts to quickly bootstrap research.
+### ToDo
 
-All models have been trained on 8x V100 GPUs.
+- [ ] distributed mode to use gpu fully and fairly
+- [ ] add loss functions
+- [ ] add other architectures
 
-You must modify the following flags:
 
-`--data-path=/path/to/dataset`
+#### Available torchvision models
 
-`--nproc_per_node=<number_of_gpus_available>`
+* fcn_resnet50
 
-## fcn_resnet50
-```
-torchrun --nproc_per_node=8 train.py --lr 0.02 --dataset coco -b 4 --model fcn_resnet50 --aux-loss
-```
+* fcn_resnet101
 
-## fcn_resnet101
-```
-torchrun --nproc_per_node=8 train.py --lr 0.02 --dataset coco -b 4 --model fcn_resnet101 --aux-loss
-```
+* deeplabv3_resnet50
 
-## deeplabv3_resnet50
-```
-torchrun --nproc_per_node=8 train.py --lr 0.02 --dataset coco -b 4 --model deeplabv3_resnet50 --aux-loss
-```
+* deeplabv3_resnet101
 
-## deeplabv3_resnet101
-```
-torchrun --nproc_per_node=8 train.py --lr 0.02 --dataset coco -b 4 --model deeplabv3_resnet101 --aux-loss
-```
+* deeplabv3_mobilenet_v3_large
 
-## deeplabv3_mobilenet_v3_large
-```
-torchrun --nproc_per_node=8 train.py --dataset coco -b 4 --model deeplabv3_mobilenet_v3_large --aux-loss --wd 0.000001
-```
-
-## lraspp_mobilenet_v3_large
-```
-torchrun --nproc_per_node=8 train.py --dataset coco -b 4 --model lraspp_mobilenet_v3_large --wd 0.000001
-```
+* lraspp_mobilenet_v3_large
