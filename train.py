@@ -14,16 +14,16 @@ import json
 import datetime 
 import wandb
 
+import torch.distributed as dist
+import torch.multiprocessing as mp
 from losses  import CELoss, DiceLoss
 from pytorch_toolbelt import losses as L
+import sys 
+
+from parallel import DataParallelModel, DataParallelCriterion
 
 import warnings
 warnings.filterwarnings(action='ignore') 
-
-try:
-    from torchvision.prototype import models as PM
-except ImportError:
-    PM = None
 
 def get_dataset(dir_path, dataset_type, mode, transform, num_classes):
     paths = {
@@ -35,20 +35,8 @@ def get_dataset(dir_path, dataset_type, mode, transform, num_classes):
     return ds, num_classes
 
 
-# def get_transform(train, args):
-#     if train:
-#         return presets.SegmentationPresetTrain(base_size=520, crop_size=480)
-#     elif not args.weights:
-#         return presets.SegmentationPresetEval(base_size=520)
-#     else:
-#         fn = PM.segmentation.__dict__[args.model]
-#         weights = PM._api.get_weight(fn, args.weights)
-#         return weights.transforms()
-
 def get_transform(train, base_size, crop_size):
     return presets.SegmentationPresetTrain(base_size, crop_size) if train else presets.SegmentationPresetEval(base_size)
-
-
 
 
 def evaluate(model, criterion, data_loader, device, num_classes, wandb=None):
@@ -96,47 +84,26 @@ def train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, devi
             wandb.log({"train_loss": loss.item(), "learning rate": optimizer.param_groups[0]["lr"]})
 
 
-def main(args, weights_path):
-    
-    if args.weights and PM is None:
-        raise ImportError("The prototype module couldn't be found. Please install the latest torchvision nightly.")
-    if args.output_dir:
-        utils.mkdir(args.output_dir)
+def main(args):
 
-    utils.init_distributed_mode(args)
-    print(args)
+    if args.distributed:
+        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
+                            world_size=args.world_size, rank=args.rank)
+        args.batch_size = int(args.batch_size/len(args.device_ids))
+        args.num_workers = int(args.num_workers/len(args.device_ids))
 
-
-    # dataset, num_classes = get_dataset(args.data_path, args.dataset, "train", get_transform(True, args), args.num_classes)
-    # dataset_test, _ = get_dataset(args.data_path, args.dataset, "val", get_transform(False, args), args.num_classes)
-
-    # if args.distributed:
-    #     train_sampler = torch.utils.data.distributed.DistributedSampler(dataset)
-    #     test_sampler = torch.utils.data.distributed.DistributedSampler(dataset_test)
-    # else:
-    #     train_sampler = torch.utils.data.RandomSampler(dataset)
-    #     test_sampler = torch.utils.data.SequentialSampler(dataset_test)
-
-    # data_loader = torch.utils.data.DataLoader(
-    #     dataset,
-    #     batch_size=args.batch_size,
-    #     sampler=train_sampler,
-    #     num_workers=args.workers,
-    #     collate_fn=utils.collate_fn,
-    #     drop_last=True,
-    # )
-
-    # data_loader_test = torch.utils.data.DataLoader(
-    #     dataset_test, batch_size=1, sampler=test_sampler, num_workers=args.workers, collate_fn=utils.collate_fn
-    # )
 
     ### SET DATALOADER ---------------------------------------------------------------------------------------------------
     dataset, num_classes = get_dataset(args.data_path, args.dataset_type, "train", get_transform(True, args.base_imgsz, args.crop_imgsz), args.num_classes)
     dataset_test, _ = get_dataset(args.data_path, args.dataset_type, "val", get_transform(False, args.base_imgsz, args.crop_imgsz), args.num_classes)
 
-    train_sampler = torch.utils.data.RandomSampler(dataset)
-    test_sampler = torch.utils.data.SequentialSampler(dataset_test)
-
+    if args.distributed:
+        train_sampler = torch.utils.data.distributed.DistributedSampler(dataset)
+        test_sampler = torch.utils.data.distributed.DistributedSampler(dataset_test)
+    else:
+        train_sampler = torch.utils.data.RandomSampler(dataset)
+        test_sampler = torch.utils.data.SequentialSampler(dataset_test)
+    
     data_loader_train = torch.utils.data.DataLoader(
         dataset, batch_size=args.batch_size,
         sampler=train_sampler, num_workers=args.num_workers,
@@ -147,14 +114,17 @@ def main(args, weights_path):
         sampler=test_sampler, num_workers=args.num_workers,
         collate_fn=utils.collate_fn)
 
+
+    ### SET MODEL -------------------------------------------------------------------------------------------------------
     if not args.weights:
         if args.pretrained:
-            model = torchvision.models.segmentation.__dict__[args.model](
-                        pretrained=args.pretrained,
-                        aux_loss=args.aux_loss,
-                    )       
-            model.classifier = torchvision.models.segmentation.deeplabv3.DeepLabHead(2048, num_classes)
-            model.aux_classifier[4] = torch.nn.Conv2d(256, num_classes, kernel_size=(1, 1), stride=(1, 1))
+            if args.model == 'deeplabv3_resnet101':
+                model = torchvision.models.segmentation.__dict__[args.model](
+                            pretrained=args.pretrained,
+                            aux_loss=False#args.aux_loss,
+                        )       
+                model.classifier = torchvision.models.segmentation.deeplabv3.DeepLabHead(2048, num_classes)
+                model.aux_classifier[4] = torch.nn.Conv2d(256, num_classes, kernel_size=(1, 1), stride=(1, 1))
         else:
             model = torchvision.models.segmentation.__dict__[args.model](
                 pretrained=args.pretrained,
@@ -163,24 +133,13 @@ def main(args, weights_path):
             )
         print(">>> LODED TORCHVISION MODEL: ", args.model)
     
-    else:
-        model = PM.segmentation.__dict__[args.model](
-            weights=args.weights, num_classes=num_classes, aux_loss=args.aux_loss
-        )
-        print(">>> LODED PM MODEL: ", args.model)
-        print(PM)
 
-    model.to(args.device)
 
     if args.distributed:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
     model_without_ddp = model
-    if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
-        model_without_ddp = model.module
 
-    # params_to_optimize = model.parameters()
     params_to_optimize = [
         {"params": [p for p in model_without_ddp.backbone.parameters() if p.requires_grad]},
         {"params": [p for p in model_without_ddp.classifier.parameters() if p.requires_grad]},
@@ -195,12 +154,25 @@ def main(args, weights_path):
         optimizer, lambda x: (1 - x / (iters_per_epoch * (args.epochs - args.lr_warmup_epochs))) ** 0.9
     )
 
+    if args.distributed:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=args.device_ids[0])
+        model_without_ddp = model.module
+        
+    if len(args.device_ids) > 1 and args.dataparallel: ## Important! Need to locate after parameter settings for optimization
+        model = torch.nn.DataParallel(model, device_ids=args.device_ids, output_device=args.device_ids[0])
+
+    model.to(args.device)
+
     ### SET LOSS FUNCTION -----------------------------------------------------------------------------------------------
     if args.loss == 'CE':
         criterion = CELoss(args.aux_loss)
     elif args.loss == 'DiceLoss':
         criterion = DiceLoss(num_classes)
 
+    # if args.dataparallel:
+    #     criterion = DataParallelCriterion(criterion)
+
+    ### SET TRAIN PARAMETERS -------------------------------------------------------------------------------------------
     if args.lr_warmup_epochs > 0:
         warmup_iters = iters_per_epoch * args.lr_warmup_epochs
         args.lr_warmup_method = args.lr_warmup_method.lower()
@@ -222,25 +194,17 @@ def main(args, weights_path):
     else:
         lr_scheduler = main_lr_scheduler
 
-    if args.resume:
-        checkpoint = torch.load(args.resume, map_location="cpu")
-        model_without_ddp.load_state_dict(checkpoint["model"], strict=not args.test_only)
-        if not args.test_only:
-            optimizer.load_state_dict(checkpoint["optimizer"])
-            lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
-            args.start_epoch = checkpoint["epoch"] + 1
-            print(">>>> RELOAD ALL !!!!!!!!!!!!!!!!!!!!!!!!!!")
-        print(">>>>>>> RELOAD MODEL", (not args.test_only))
+    if args.weights:
+        checkpoint = torch.load(args.weights, map_location="cpu")
+        model_without_ddp.load_state_dict(checkpoint["model"], strict=True)
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+        args.start_epoch = checkpoint["epoch"] + 1
+        print(">>>> RELOAD ALL !!!!!!!!!!!!!!!!!!!!!!!!!!")
 
-    if len(args.device_ids) > 1: ## Important! Need to locate after parameter settings for optimization
-        model = torch.nn.DataParallel(model, device_ids=args.device_ids)
 
-    if args.test_only:
-        confmat = evaluate(model, data_loader_test, device=args.device, num_classes=num_classes)
-        print(confmat)
-        return
 
-    ### For wandb
+    ### SET WANDB ---------------------------------------------------------------------------------------------------------------------
     if args.wandb:
         wandb.init(project=args.project_name, reinit=True)
         wandb.run.name = args.run_name
@@ -248,6 +212,8 @@ def main(args, weights_path):
         wandb.watch(model)
 
 
+    ### START TRAINING --------------------------------------------------------------------------------------------------------------------
+    print(">>> Start training .........................................")
     min_loss = 999
     info_weights = {'best': None, 'last': None}
     start_time = time.time()
@@ -282,14 +248,14 @@ def main(args, weights_path):
 
         if min_loss > loss_val:
             min_loss = loss_val
-            utils.save_on_master(checkpoint, os.path.join(weights_path, "best.pth"))
+            utils.save_on_master(checkpoint, os.path.join(args.weights_path, "best.pth"))
             info_weights['best'] = epoch
             print(">>> Saved the best model .......! ")
 
-        utils.save_on_master(checkpoint, os.path.join(weights_path, "last.pth"))
+        utils.save_on_master(checkpoint, os.path.join(args.weights_path, "last.pth"))
         info_weights['last'] = epoch
 
-        with open(osp.join(weights_path, 'info.txt'), 'w') as f:
+        with open(osp.join(args.weights_path, 'info.txt'), 'w') as f:
             f.write('best: {}'.format(info_weights['best']))
             f.write('\n')
             f.write('last: {}'.format(info_weights['last']))
@@ -317,6 +283,7 @@ def get_args_parser(add_help=True):
     parser.add_argument("--aux-loss", action="store_true", help="auxiliar loss")
     parser.add_argument('--device', default='cuda', help='gpu device ids')
     parser.add_argument('--device-ids', default='0,1', help='gpu device ids')
+    parser.add_argument('--dataparallel', action='store_true')
     parser.add_argument("--batch-size", default=4, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
     parser.add_argument("--epochs", default=300, type=int, metavar="N", help="number of total epochs to run")
     parser.add_argument("--num-workers", default=32, type=int, metavar="N", help="number of data loading workers (default: 16)")
@@ -328,19 +295,16 @@ def get_args_parser(add_help=True):
     parser.add_argument("--lr-warmup-decay", default=0.01, type=float, help="the decay for lr")
     parser.add_argument("--print-freq", default=10, type=int, help="print frequency")
     parser.add_argument('--output-dir', default='./outputs/train', help='path where to save')
-    # parser.add_argument("--resume", default="./outputs/train/1/weights/last.pth", type=str, help="path of checkpoint")
-    parser.add_argument("--resume", default="", type=str, help="path of checkpoint")
     parser.add_argument("--start-epoch", default=0, type=int, metavar="N", help="start epoch")
-    parser.add_argument(
-        "--test-only",
-        dest="test_only",
-        help="Only test the model",
-        action="store_true",
-    )
     parser.add_argument("--pretrained", default=True)
+
     # distributed training parameters
+    parser.add_argument("--distributed", action='store_true')
+    parser.add_argument("--local-rank", default=0, type=int)
     parser.add_argument("--world-size", default=1, type=int, help="number of distributed processes")
-    parser.add_argument("--dist-url", default="env://", type=str, help="url used to set up distributed training")
+    parser.add_argument("--dist-url", default='tcp://127.0.0.1:5001', type=str, help="url used to set up distributed training")
+    parser.add_argument('--dist-backend', default='nccl', type=str, help='')
+    parser.add_argument('--rank', default=0, type=int, help='')
 
     # Prototype models only
     parser.add_argument("--weights", default=None, type=str, help="the weights enum name to load")
@@ -354,6 +318,10 @@ if __name__ == "__main__":
     args = get_args_parser().parse_args()
 
     args.device_ids = list(map(int, args.device_ids.split(',')))
+
+    args.world_size = len(args.device_ids)*args.world_size
+    args.rank = args.rank*len(args.device_ids) + args.device_ids[0]
+
     args.classes = ['_background_'] + list(osp.split(osp.splitext(args.data_path)[0])[-1].split('_'))
     args.num_classes = len(list(osp.split(osp.splitext(args.data_path)[0])[-1].split('_'))) + 1
     if args.device == 'cuda':
@@ -372,13 +340,24 @@ if __name__ == "__main__":
         output_path = args.output_dir
         args.date = str(datetime.datetime.now())
         utils.mkdir(osp.join(output_path, 'cfg'))
-        weights_path = osp.join(output_path, 'weights')
-        utils.mkdir(weights_path)
+        args.weights_path = osp.join(output_path, 'weights')
+        utils.mkdir(args.weights_path)
 
     args.run_name = osp.split(osp.splitext(output_path)[0])[-1]
     with open(osp.join(output_path, 'cfg/config.json'), 'w') as f:
         json.dump(args.__dict__, f, indent=2)
+    
+    if args.output_dir:
+        utils.mkdir(args.output_dir)
 
+    # utils.init_distributed_mode(args)
     print(args)
 
-    main(args, weights_path)
+    if args.distributed and args.dataparallel:
+        print("ERROR: Distributed mode cannot be executed with Dataparallel mode .......!")
+        sys.exit(0)
+
+    if args.distributed:
+        mp.spawn(main, nprocs=len(args.device_ids), args=args)
+    else:
+        main(args)
