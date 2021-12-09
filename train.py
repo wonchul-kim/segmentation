@@ -13,7 +13,10 @@ from torch import nn
 import json 
 import datetime 
 import wandb
-from losses  import CELoss, FocalTverskyLoss
+
+from losses  import CELoss, DiceLoss
+from pytorch_toolbelt import losses as L
+
 import warnings
 warnings.filterwarnings(action='ignore') 
 
@@ -77,9 +80,11 @@ def train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, devi
     for image, target, fn in metric_logger.log_every(data_loader, print_freq, header):
         image, target = image.to(device), target.to(device)
         output = model(image)
+        
         loss = criterion(output, target)
 
         optimizer.zero_grad()
+
         loss.backward()
         optimizer.step()
 
@@ -125,6 +130,7 @@ def main(args, weights_path):
     #     dataset_test, batch_size=1, sampler=test_sampler, num_workers=args.workers, collate_fn=utils.collate_fn
     # )
 
+    ### SET DATALOADER ---------------------------------------------------------------------------------------------------
     dataset, num_classes = get_dataset(args.data_path, args.dataset_type, "train", get_transform(True, args.base_imgsz, args.crop_imgsz), args.num_classes)
     dataset_test, _ = get_dataset(args.data_path, args.dataset_type, "val", get_transform(False, args.base_imgsz, args.crop_imgsz), args.num_classes)
 
@@ -189,10 +195,11 @@ def main(args, weights_path):
         optimizer, lambda x: (1 - x / (iters_per_epoch * (args.epochs - args.lr_warmup_epochs))) ** 0.9
     )
 
-    if args.loss == 'CE' or args.loss == 'CE_AUX':
-        criterion = CELoss(args.loss)
-    elif args.loss == 'FocalTv':
-        criterion = FocalTverskyLoss()
+    ### SET LOSS FUNCTION -----------------------------------------------------------------------------------------------
+    if args.loss == 'CE':
+        criterion = CELoss(args.aux_loss)
+    elif args.loss == 'DiceLoss':
+        criterion = DiceLoss(num_classes)
 
     if args.lr_warmup_epochs > 0:
         warmup_iters = iters_per_epoch * args.lr_warmup_epochs
@@ -299,17 +306,18 @@ def get_args_parser(add_help=True):
 
     parser = argparse.ArgumentParser(description="PyTorch Segmentation Training", add_help=add_help)
     
-    parser.add_argument('--project-name', default='interojo')
+    parser.add_argument('--project-name', default='INTEROJO')
     # parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust')
-    parser.add_argument('--data-path', default='/home/nvadmin/wonchul/mnt/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust', help='dataset path')
+    # parser.add_argument('--data-path', default='/home/nvadmin/wonchul/mnt/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust', help='dataset path')
+    parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust', help='dataset path')
     parser.add_argument('--wandb', default=False)
-    parser.add_argument("--loss", default='FocalTv', help='CE | CE_AUX | FocalTv')
     parser.add_argument('--dataset-type', default='coco', help='dataset name')
     parser.add_argument("--model", default="deeplabv3_resnet101", type=str, help="model name")
+    parser.add_argument("--loss", default='DiceLoss', help='CE | DiceLoss')
     parser.add_argument("--aux-loss", action="store_true", help="auxiliar loss")
     parser.add_argument('--device', default='cuda', help='gpu device ids')
-    parser.add_argument('--device-ids', default='2,3', help='gpu device ids')
-    parser.add_argument("--batch-size", default=256, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
+    parser.add_argument('--device-ids', default='0,1', help='gpu device ids')
+    parser.add_argument("--batch-size", default=4, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
     parser.add_argument("--epochs", default=300, type=int, metavar="N", help="number of total epochs to run")
     parser.add_argument("--num-workers", default=32, type=int, metavar="N", help="number of data loading workers (default: 16)")
     parser.add_argument("--lr", default=0.01, type=float, help="initial learning rate")

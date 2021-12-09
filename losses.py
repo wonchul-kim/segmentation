@@ -1,60 +1,96 @@
 import torch.nn.functional as F
 import torch.nn as nn 
-
-#PyTorch
-ALPHA = 0.5
-BETA = 0.5
-GAMMA = 1
-
-class FocalTverskyLoss(nn.Module):
-    def __init__(self, weight=None, size_average=True):
-        super(FocalTverskyLoss, self).__init__()
-
-    def forward(self, inputs, targets, smooth=1, alpha=ALPHA, beta=BETA, gamma=GAMMA):
-        
-
-        #comment out if your model contains a sigmoid or equivalent activation layer
-        inputs = inputs['out']
-        inputs = F.sigmoid(inputs)       
-        
-        #flatten label and prediction tensors
-        inputs = inputs.view(-1)
-        targets = targets.view(-1)
-        
-        #True Positives, False Positives & False Negatives
-        TP = (inputs * targets).sum()    
-        FP = ((1-targets) * inputs).sum()
-        FN = (targets * (1-inputs)).sum()
-        
-        Tversky = (TP + smooth) / (TP + alpha*FP + beta*FN + smooth)  
-        FocalTversky = (1 - Tversky)**gamma
-                       
-        return FocalTversky
-
-
+import torch 
+import numpy as np
 
 class CELoss(nn.Module):
-    def __init__(self, aux):
+    def __init__(self, aux_loss):
         super(CELoss, self).__init__()
-        if aux == 'CE_AUX':
-            self.aux = True
+        self.aux_loss = aux_loss
 
-    def forward(self, inputs, target):
+    def forward(self, preds, targets):
         losses = {}
-        for name, x in inputs.items():
-            losses[name] = nn.functional.cross_entropy(x, target, ignore_index=255)
+        print(">>> {}, {}".format(preds['out'].size(), targets.size()))
 
-        if not self.aux:
+        for name, x in preds.items():
+            losses[name] = nn.functional.cross_entropy(x, targets, ignore_index=255)
+
+        if not self.aux_loss:
             return losses["out"]
         else:
             return losses["out"] + 0.5 * losses["aux"]
 
-# def CELoss(inputs, target):
-#     losses = {}
-#     for name, x in inputs.items():
-#         losses[name] = nn.functional.cross_entropy(x, target, ignore_index=255)
+# class DiceLoss(nn.Module):
+#     def __init__(self):
+#         super(DiceLoss, self).__init__()
+        
+#     def forward(self, preds, targets, smooth = 1e-5):
+#         preds = preds['out']
 
-#     if len(losses) == 1:
-#         return losses["out"]
+#         print(preds.size(), targets.size())
+#         print(torch.where(targets == 255, targets, 0))
+#         targets = F.one_hot(targets).float()
+#         print(targets.size())
+#         targets = targets.transpose(1, 3)
+#         print(targets.size())
+#         targets = targets.transpose(2, 3)
+#         print(targets.size())
+        
+#         bce = F.binary_cross_entropy_with_logits(preds, targets, reduction='sum')
+        
+#         preds = torch.sigmoid(preds)
+#         intersection = (preds * targets).sum(dim=(2,3))
+#         union = preds.sum(dim=(2,3)) + targets.sum(dim=(2,3))
+        
+#         # dice coefficient
+#         dice = 2.0 * (intersection + smooth) / (union + smooth)
+        
+#         # dice loss
+#         dice_loss = 1.0 - dice
+        
+#         # total loss
+#         loss = bce + dice_loss
+    
+#         return loss.sum(), dice.sum()
 
-#     return losses["out"] + 0.5 * losses["aux"]
+class DiceLoss(nn.Module):
+    def __init__(self, n_classes):
+        super(DiceLoss, self).__init__()
+        self.n_classes = n_classes
+
+    def _one_hot_encoder(self, input_tensor):
+        tensor_list = []
+        for i in range(self.n_classes):
+            temp_prob = input_tensor == i  # * torch.ones_like(input_tensor)
+            tensor_list.append(temp_prob.unsqueeze(1))
+        output_tensor = torch.cat(tensor_list, dim=1)
+
+        return output_tensor.float()
+
+    def _dice_loss(self, score, target):
+        target = target.float()
+        smooth = 1e-5
+        intersect = torch.sum(score * target)
+        y_sum = torch.sum(target * target)
+        z_sum = torch.sum(score * score)
+        loss = (2 * intersect + smooth) / (z_sum + y_sum + smooth)
+        loss = 1 - loss
+
+        return loss
+
+    def forward(self, inputs, target, weight=None, softmax=False):
+        inputs = inputs['out']
+        if softmax:
+            inputs = torch.softmax(inputs, dim=1)
+        target = self._one_hot_encoder(target)
+        if weight is None:
+            weight = [1] * self.n_classes
+        assert inputs.size() == target.size(), 'predict {} & target {} shape do not match'.format(inputs.size(), target.size())
+        class_wise_dice = []
+        loss = 0.0
+        for i in range(0, self.n_classes):
+            dice = self._dice_loss(inputs[:, i], target[:, i])
+            class_wise_dice.append(1.0 - dice.item())
+            loss += dice * weight[i]
+            
+        return loss / self.n_classes
