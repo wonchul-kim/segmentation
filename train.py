@@ -162,6 +162,7 @@ def main(args):
         
     if len(args.device_ids) > 1 and args.dataparallel: ## Important! Need to locate after parameter settings for optimization
         model = torch.nn.DataParallel(model, device_ids=args.device_ids, output_device=args.device_ids[0])
+        print(">>> The training is executed by dataparallel")
 
     model.to(args.device)
 
@@ -210,7 +211,7 @@ def main(args):
     ### SET WANDB ---------------------------------------------------------------------------------------------------------------------
     if args.wandb:
         wandb.init(project=args.project_name, reinit=True)
-        wandb.run.name = args.run_name
+        wandb.run.name = args.run_name + '_' + args.model
         wandb.config.update(args)
         wandb.watch(model)
 
@@ -276,10 +277,10 @@ def get_args_parser(add_help=True):
 
     parser = argparse.ArgumentParser(description="PyTorch based semantic segmentation", add_help=add_help)
     
-    parser.add_argument('--project-name', default='INTEROJO')
+    parser.add_argument('--project-name', default='INTEROJO_S_Factory')
     # parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust')
     parser.add_argument('--data-path', default='/home/nvadmin/wonchul/mnt/HDD/datasets/projects/interojo/S_factory/coco_datasets_good/DUST_BUBBLE_DAMAGE_EDGE_RING_LINE_OVERLAP', help='dataset path')
-    parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/S_factory/coco_datasets_good/DUST_BUBBLE_DAMAGE_EDGE_RING_LINE_OVERLAP', help='dataset path')
+    # parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/S_factory/coco_datasets_good/DUST_BUBBLE_DAMAGE_EDGE_RING_LINE_OVERLAP', help='dataset path')
     parser.add_argument('--wandb', action='store_true')
     parser.add_argument('--dataset-type', default='coco', help='dataset name')
 
@@ -290,8 +291,8 @@ def get_args_parser(add_help=True):
     parser.add_argument("--pretrained", default=True)
     parser.add_argument("--weights", default=None, type=str, help="the weights to load")
     parser.add_argument("--input-channels", default=3)
-    parser.add_argument('--base-imgsz', default=80, type=int, help='base image size')
-    parser.add_argument('--crop-imgsz', default=80, type=int, help='base image size')
+    parser.add_argument('--base-imgsz', default=1280, type=int, help='base image size')
+    parser.add_argument('--crop-imgsz', default=1280, type=int, help='base image size')
 
     # loss
     parser.add_argument("--loss", default='DiceLoss', help='CE | DiceLoss | BceDiceLoss')
@@ -302,7 +303,7 @@ def get_args_parser(add_help=True):
     parser.add_argument('--device-ids', default='0,1', help='gpu device ids')
     
     # training parameters
-    parser.add_argument("--batch-size", default=8, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
+    parser.add_argument("--batch-size", default=4, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
     parser.add_argument("--start-epoch", default=0, type=int, metavar="N", help="start epoch")
     
     parser.add_argument("--epochs", default=300, type=int, metavar="N", help="number of total epochs to run")
