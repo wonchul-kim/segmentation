@@ -2,6 +2,10 @@ import torch.nn.functional as F
 import torch.nn as nn 
 import torch 
 import numpy as np
+try:
+    from LovaszSoftmax.pytorch.lovasz_losses import lovasz_hinge
+except ImportError:
+    pass
 
 class CELoss(nn.Module):
     def __init__(self, aux_loss):
@@ -20,43 +24,11 @@ class CELoss(nn.Module):
         else:
             return losses["out"] + 0.5 * losses["aux"]
 
-# class DiceLoss(nn.Module):
-#     def __init__(self):
-#         super(DiceLoss, self).__init__()
-        
-#     def forward(self, preds, targets, smooth = 1e-5):
-#         preds = preds['out']
-
-#         print(preds.size(), targets.size())
-#         print(torch.where(targets == 255, targets, 0))
-#         targets = F.one_hot(targets).float()
-#         print(targets.size())
-#         targets = targets.transpose(1, 3)
-#         print(targets.size())
-#         targets = targets.transpose(2, 3)
-#         print(targets.size())
-        
-#         bce = F.binary_cross_entropy_with_logits(preds, targets, reduction='sum')
-        
-#         preds = torch.sigmoid(preds)
-#         intersection = (preds * targets).sum(dim=(2,3))
-#         union = preds.sum(dim=(2,3)) + targets.sum(dim=(2,3))
-        
-#         # dice coefficient
-#         dice = 2.0 * (intersection + smooth) / (union + smooth)
-        
-#         # dice loss
-#         dice_loss = 1.0 - dice
-        
-#         # total loss
-#         loss = bce + dice_loss
-    
-#         return loss.sum(), dice.sum()
-
 class DiceLoss(nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, bce_loss):
         super(DiceLoss, self).__init__()
         self.num_classes = num_classes
+        self.bce_loss = bce_loss
 
     def _one_hot_encoder(self, input_tensor):
         tensor_list = []
@@ -80,9 +52,12 @@ class DiceLoss(nn.Module):
 
     def forward(self, inputs, target, weight=None, softmax=False):
         inputs = inputs['out']
+        target = self._one_hot_encoder(target)
+        if self.bce_loss:
+            bce = F.binary_cross_entropy_with_logits(inputs, target)
+
         if softmax:
             inputs = torch.softmax(inputs, dim=1)
-        target = self._one_hot_encoder(target)
         if weight is None:
             weight = [1] * self.num_classes
         assert inputs.size() == target.size(), 'predict {} & target {} shape do not match'.format(inputs.size(), target.size())
@@ -92,5 +67,52 @@ class DiceLoss(nn.Module):
             dice = self._dice_loss(inputs[:, i], target[:, i])
             class_wise_dice.append(1.0 - dice.item())
             loss += dice * weight[i]
-
+        
+        if self.bce_loss:
+            loss += bce
         return loss / self.num_classes
+
+
+
+
+# class BCEDiceLoss(nn.Module):
+#     def __init__(self, num_classes):
+#         super().__init__()
+#         self.num_classes = num_classes
+
+#     def _one_hot_encoder(self, input_tensor):
+#         tensor_list = []
+#         for i in range(self.num_classes):
+#             temp_prob = input_tensor == i  # * torch.ones_like(input_tensor)
+#             tensor_list.append(temp_prob.unsqueeze(1))
+#         output_tensor = torch.cat(tensor_list, dim=1)
+
+#         return output_tensor.float()
+
+#     def forward(self, input, target):
+#         input = input['out']
+#         target = self._one_hot_encoder(target)
+
+#         bce = F.binary_cross_entropy_with_logits(input, target)
+#         # bce = F.cross_entropy(input, target, ignore_index=255)
+#         smooth = 1e-5
+#         input = torch.sigmoid(input)
+#         num = target.size(0)
+#         input = input.view(num, -1)
+#         target = target.view(num, -1)
+#         intersection = (input * target)
+#         dice = (2. * intersection.sum(1) + smooth) / (input.sum(1) + target.sum(1) + smooth)
+#         dice = 1 - dice.sum() / num
+#         return 0.5 * bce + dice
+
+
+# class LovaszHingeLoss(nn.Module):
+#     def __init__(self):
+#         super().__init__()
+
+#     def forward(self, input, target):
+#         input = input.squeeze(1)
+#         target = target.squeeze(1)
+#         loss = lovasz_hinge(input, target, per_image=True)
+
+#         return loss

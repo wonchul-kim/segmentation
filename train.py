@@ -1,6 +1,10 @@
-import datetime
 import os
 import os.path as osp
+import sys 
+sys.path.append(osp.join(osp.dirname(__file__), 'src'))
+sys.path.append(osp.join(osp.dirname(__file__), 'models'))
+
+import datetime
 import time
 
 import presets
@@ -14,17 +18,20 @@ import json
 import datetime 
 import wandb
 
-from models import create_model
+from models.torchvision_models import create_model
+import models.unetpp as unetpp
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from losses  import CELoss, DiceLoss
+from losses  import CELoss, DiceLoss, BCEDiceLoss
 from pytorch_toolbelt import losses as L
-import sys 
 
 from parallel import DataParallelModel, DataParallelCriterion
 
 import warnings
 warnings.filterwarnings(action='ignore') 
+
+ARCH_NAMES = ['UNet', 'NestedUNet']
+
 
 def get_dataset(dir_path, dataset_type, mode, transform, num_classes):
     paths = {
@@ -151,7 +158,9 @@ def main(args):
     if args.loss == 'CE':
         criterion = CELoss(args.aux_loss)
     elif args.loss == 'DiceLoss':
-        criterion = DiceLoss(num_classes)
+        criterion = DiceLoss(num_classes, False)
+    elif args.loss == 'BCEDiceLoss':
+        criterion = DiceLoss(num_classes, True)
 
     # if args.dataparallel:
     #     criterion = DataParallelCriterion(criterion)
@@ -263,7 +272,7 @@ def get_args_parser(add_help=True):
     parser.add_argument('--wandb', default=False)
     parser.add_argument('--dataset-type', default='coco', help='dataset name')
     parser.add_argument("--model", default="deeplabv3_resnet101", type=str, help="model name")
-    parser.add_argument("--loss", default='DiceLoss', help='CE | DiceLoss')
+    parser.add_argument("--loss", default='DiceLoss', help='CE | DiceLoss | BCEDiceLoss')
     parser.add_argument("--aux-loss", action="store_true", help="auxiliar loss")
     parser.add_argument('--device', default='cuda', help='gpu device ids')
     parser.add_argument('--device-ids', default='0,1', help='gpu device ids')
