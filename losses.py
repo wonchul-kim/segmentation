@@ -2,6 +2,8 @@ import torch.nn.functional as F
 import torch.nn as nn 
 import torch 
 import numpy as np
+import collections
+import sys
 try:
     from LovaszSoftmax.pytorch.lovasz_losses import lovasz_hinge
 except ImportError:
@@ -51,7 +53,10 @@ class DiceLoss(nn.Module):
         return loss
 
     def forward(self, inputs, target, weight=None, softmax=False):
-        inputs = inputs['out']
+
+        if isinstance(inputs, collections.OrderedDict) and 'out' in inputs.keys():
+            inputs = inputs['out']
+            # print("The type of inputs of model is not supported, which is {} and the its length is {}.".format(type(inputs), len(inputs)))
         target = self._one_hot_encoder(target)
         if self.bce_loss:
             bce = F.binary_cross_entropy_with_logits(inputs, target)
@@ -68,10 +73,12 @@ class DiceLoss(nn.Module):
             class_wise_dice.append(1.0 - dice.item())
             loss += dice * weight[i]
         
-        if self.bce_loss:
-            loss += bce
-        return loss / self.num_classes
+        loss = loss / self.num_classes
 
+        if self.bce_loss:
+            return loss + 0.5*bce
+        
+        return loss
 
 
 

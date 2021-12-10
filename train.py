@@ -10,6 +10,7 @@ import time
 import presets
 import torch
 import torch.utils.data
+import torch.backends.cudnn as cudnn
 import torchvision
 import utils
 from coco_utils import get_coco
@@ -17,21 +18,21 @@ from torch import nn
 import json 
 import datetime 
 import wandb
+import collections
 
-from models.torchvision_models import create_model
-import models.unetpp as unetpp
+### moduel 
+from models.models import CreateModel
+
+### distributed 
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from losses  import CELoss, DiceLoss, BCEDiceLoss
+from losses  import CELoss, DiceLoss
 from pytorch_toolbelt import losses as L
-
 from parallel import DataParallelModel, DataParallelCriterion
 
+### ignore warnings
 import warnings
 warnings.filterwarnings(action='ignore') 
-
-ARCH_NAMES = ['UNet', 'NestedUNet']
-
 
 def get_dataset(dir_path, dataset_type, mode, transform, num_classes):
     paths = {
@@ -49,20 +50,20 @@ def get_transform(train, base_size, crop_size):
 
 def evaluate(model, criterion, data_loader, device, num_classes, wandb=None):
     model.eval()
-    val_loss = 0
     confmat = utils.ConfusionMatrix(num_classes)
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = "Test:"
     with torch.inference_mode():
         for image, target, fn in metric_logger.log_every(data_loader, 100, header):
             image, target = image.to(device), target.to(device)
+
             output = model(image)
 
             loss = criterion(output, target)
-            output = output["out"]
+            if isinstance(output, collections.OrderedDict) and 'out' in output.keys():
+                output = output['out']
 
             confmat.update(target.flatten(), output.argmax(1).flatten())
-
         confmat.reduce_from_all_processes()
 
     return confmat, loss
@@ -75,6 +76,7 @@ def train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, devi
     header = f"Epoch: [{epoch}]"
     for image, target, fn in metric_logger.log_every(data_loader, print_freq, header):
         image, target = image.to(device), target.to(device)
+
         output = model(image)
         
         loss = criterion(output, target)
@@ -118,27 +120,36 @@ def main(args):
         collate_fn=utils.collate_fn, drop_last=True)
 
     data_loader_test = torch.utils.data.DataLoader(
-        dataset_test, batch_size=1,
+        dataset_test, batch_size=args.batch_size,#1,
         sampler=test_sampler, num_workers=args.num_workers,
         collate_fn=utils.collate_fn)
 
 
     ### SET MODEL -------------------------------------------------------------------------------------------------------
-    model = create_model(args)
+    model, params_to_optimize = CreateModel(args)
+    print(">>> LODED TORCHVISION MODEL: ", args.model)
 
     if args.distributed:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
     model_without_ddp = model
 
-    params_to_optimize = [
-        {"params": [p for p in model_without_ddp.backbone.parameters() if p.requires_grad]},
-        {"params": [p for p in model_without_ddp.classifier.parameters() if p.requires_grad]},
-    ]
-    if args.aux_loss:
-        params = [p for p in model_without_ddp.aux_classifier.parameters() if p.requires_grad]
-        params_to_optimize.append({"params": params, "lr": args.lr * 10})
-    optimizer = torch.optim.SGD(params_to_optimize, lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    # ### SET OPTIMIZER & SCHEDULER ------------------------------------------------------------------------------------------
+    # params_to_optimize = [
+    #     {"params": [p for p in model_without_ddp.backbone.parameters() if p.requires_grad]},
+    #     {"params": [p for p in model_without_ddp.classifier.parameters() if p.requires_grad]},
+    # ]
+    # if args.aux_loss:
+    #     params = [p for p in model_without_ddp.aux_classifier.parameters() if p.requires_grad]
+    #     params_to_optimize.append({"params": params, "lr": args.lr * 10})
+
+    if args.optimizer == 'Adam':
+        optimizer = torch.optim.Adam(params_to_optimize, lr=args.lr, weight_decay=args.weight_decay)
+    elif args.optimizer == 'SGD':
+        optimizer = torch.optim.SGD(params_to_optimize, lr=args.lr, momentum=args.momentum,
+                              nesterov=args.nesterov, weight_decay=args.weight_decay)
+    else:
+        raise NotImplementedError
 
     iters_per_epoch = len(data_loader_train)
     main_lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
@@ -159,7 +170,7 @@ def main(args):
         criterion = CELoss(args.aux_loss)
     elif args.loss == 'DiceLoss':
         criterion = DiceLoss(num_classes, False)
-    elif args.loss == 'BCEDiceLoss':
+    elif args.loss == 'BceDiceLoss':
         criterion = DiceLoss(num_classes, True)
 
     # if args.dataparallel:
@@ -194,7 +205,6 @@ def main(args):
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
         args.start_epoch = checkpoint["epoch"] + 1
         print(">>>> RELOAD ALL !!!!!!!!!!!!!!!!!!!!!!!!!!")
-
 
 
     ### SET WANDB ---------------------------------------------------------------------------------------------------------------------
@@ -271,25 +281,46 @@ def get_args_parser(add_help=True):
     parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust', help='dataset path')
     parser.add_argument('--wandb', default=False)
     parser.add_argument('--dataset-type', default='coco', help='dataset name')
-    parser.add_argument("--model", default="deeplabv3_resnet101", type=str, help="model name")
-    parser.add_argument("--loss", default='DiceLoss', help='CE | DiceLoss | BCEDiceLoss')
+
+    # Model setting
+    parser.add_argument("--model", default="lraspp_mobilenet_v3_large", type=str, 
+            help="For torchvision,  deeplabv3_resnet50 | deeplabv3_resnet101 | deeplabv3_mobilenet_v3_large | lraspp_mobilenet_v3_large" +
+                 "For UNet**, NestedUNet | UNet")
+    parser.add_argument("--pretrained", default=True)
+    parser.add_argument("--weights", default=None, type=str, help="the weights to load")
+    parser.add_argument("--input-channels", default=3)
+    parser.add_argument('--base-imgsz', default=80, type=int, help='base image size')
+    parser.add_argument('--crop-imgsz', default=80, type=int, help='base image size')
+
+    # loss
+    parser.add_argument("--loss", default='DiceLoss', help='CE | DiceLoss | BceDiceLoss')
     parser.add_argument("--aux-loss", action="store_true", help="auxiliar loss")
+    
+    # device
     parser.add_argument('--device', default='cuda', help='gpu device ids')
     parser.add_argument('--device-ids', default='0,1', help='gpu device ids')
-    parser.add_argument('--dataparallel', action='store_true')
-    parser.add_argument("--batch-size", default=4, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
+    
+    # training parameters
+    parser.add_argument("--batch-size", default=8, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
+    parser.add_argument("--start-epoch", default=0, type=int, metavar="N", help="start epoch")
+    
     parser.add_argument("--epochs", default=300, type=int, metavar="N", help="number of total epochs to run")
+    parser.add_argument('--dataparallel', action='store_true')
     parser.add_argument("--num-workers", default=32, type=int, metavar="N", help="number of data loading workers (default: 16)")
+
+    # optimizer & lr 
     parser.add_argument("--lr", default=0.01, type=float, help="initial learning rate")
-    parser.add_argument("--momentum", default=0.9, type=float, metavar="M", help="momentum")
-    parser.add_argument("-weight-decay", default=1e-4, type=float, metavar="W", help="weight decay (default: 1e-4)", dest="weight_decay")
     parser.add_argument("--lr-warmup-epochs", default=0, type=int, help="the number of epochs to warmup (default: 0)")
     parser.add_argument("--lr-warmup-method", default="linear", type=str, help="the warmup method (default: linear)")
     parser.add_argument("--lr-warmup-decay", default=0.01, type=float, help="the decay for lr")
-    parser.add_argument("--print-freq", default=10, type=int, help="print frequency")
-    parser.add_argument('--output-dir', default='./outputs/train', help='path where to save')
-    parser.add_argument("--start-epoch", default=0, type=int, metavar="N", help="start epoch")
-    parser.add_argument("--pretrained", default=True)
+    
+    parser.add_argument("--optimizer", default='SGD', help='SGD | Adam')
+    parser.add_argument("--momentum", default=0.9, type=float, metavar="M", help="momentum")
+    parser.add_argument("--weight-decay", default=1e-4, type=float, metavar="W", help="weight decay (default: 1e-4)", dest="weight_decay")
+    parser.add_argument('--nesterov', default=False, help='nesterov')
+
+    # if the model is unetpp
+    parser.add_argument('--deep-supervision', action='store_true')
 
     # distributed training parameters
     parser.add_argument("--distributed", action='store_true')
@@ -300,10 +331,12 @@ def get_args_parser(add_help=True):
     parser.add_argument('--rank', default=0, type=int, help='')
 
     # Prototype models only
-    parser.add_argument("--weights", default=None, type=str, help="the weights enum name to load")
-    parser.add_argument('--base-imgsz', default=80, type=int, help='base image size')
-    parser.add_argument('--crop-imgsz', default=80, type=int, help='base image size')
 
+    
+    # etc.
+    parser.add_argument("--print-freq", default=10, type=int, help="print frequency")
+    parser.add_argument('--output-dir', default='./outputs/train', help='path where to save')
+    
     return parser
 
 
@@ -349,6 +382,8 @@ if __name__ == "__main__":
     if args.distributed and args.dataparallel:
         print("ERROR: Distributed mode cannot be executed with Dataparallel mode .......!")
         sys.exit(0)
+
+    cudnn.benchmark = True ## ??????????????????????????????????????????????????????????
 
     if args.distributed:
         mp.spawn(main, nprocs=len(args.device_ids), args=args)

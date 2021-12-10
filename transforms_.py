@@ -125,3 +125,28 @@ class Normalize_(object):
     def __call__(self, image):
         image = F.normalize(image, mean=self.mean, std=self.std)
         return image
+
+class PILToTensor:
+    def __call__(self, image, target):
+        image = F.pil_to_tensor(image)
+        target = torch.as_tensor(np.array(target), dtype=torch.int64)
+        return image, target
+
+
+class ConvertImageDtype:
+    def __init__(self, dtype):
+        self.dtype = dtype
+
+    def __call__(self, image, target):
+        image = F.convert_image_dtype(image, self.dtype)
+        return image, target
+
+
+class Normalize:
+    def __init__(self, mean, std):
+        self.mean = mean
+        self.std = std
+
+    def __call__(self, image, target):
+        image = F.normalize(image, mean=self.mean, std=self.std)
+        return image, target

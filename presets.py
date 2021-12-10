@@ -1,5 +1,5 @@
 import torch
-import transforms as T
+import transforms_ as T
 
 
 class SegmentationPresetTrain:
