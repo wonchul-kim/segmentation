@@ -240,6 +240,7 @@ def main(args):
             train_one_epoch(model, criterion, optimizer, data_loader_train, lr_scheduler, args.device, epoch, args.print_freq, None)
             confmat, loss_val = evaluate(model, criterion, data_loader_test, device=args.device, num_classes=num_classes, wandb=None)
         
+        print(args.classes)
         print(confmat)
         checkpoint = {
             "model": model_without_ddp.state_dict(),
@@ -277,13 +278,13 @@ def get_args_parser(add_help=True):
     
     parser.add_argument('--project-name', default='INTEROJO')
     # parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust')
-    # parser.add_argument('--data-path', default='/home/nvadmin/wonchul/mnt/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust', help='dataset path')
-    parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust', help='dataset path')
-    parser.add_argument('--wandb', default=False)
+    parser.add_argument('--data-path', default='/home/nvadmin/wonchul/mnt/HDD/datasets/projects/interojo/S_factory/coco_datasets_good/DUST_BUBBLE_DAMAGE_EDGE_RING_LINE_OVERLAP', help='dataset path')
+    parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/S_factory/coco_datasets_good/DUST_BUBBLE_DAMAGE_EDGE_RING_LINE_OVERLAP', help='dataset path')
+    parser.add_argument('--wandb', action='store_true')
     parser.add_argument('--dataset-type', default='coco', help='dataset name')
 
     # Model setting
-    parser.add_argument("--model", default="lraspp_mobilenet_v3_large", type=str, 
+    parser.add_argument("--model", default="deeplabv3_resnet101", type=str, 
             help="For torchvision,  deeplabv3_resnet50 | deeplabv3_resnet101 | deeplabv3_mobilenet_v3_large | lraspp_mobilenet_v3_large" +
                  "For UNet**, NestedUNet | UNet")
     parser.add_argument("--pretrained", default=True)
