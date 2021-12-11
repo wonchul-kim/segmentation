@@ -1,10 +1,6 @@
 import datetime
 import os
 import os.path as osp
-import sys 
-sys.path.append(osp.join(osp.dirname(__file__), 'src'))
-sys.path.append(osp.join(osp.dirname(__file__), 'models'))
-
 import time
 import json
 import torch
@@ -30,10 +26,6 @@ import glob
 import copy
 from transforms_ import Compose
 import transforms_ as T
-
-### moduel 
-from models.models import CreateModel
-
 
 warnings.filterwarnings("ignore")
 
@@ -109,8 +101,13 @@ def main(args):
 
     device = torch.device(args.device)
 
-    model, params_to_optimize = CreateModel(args)
-    print(">>> LODED TORCHVISION MODEL: ", args.model)
+    if args.model == 'deeplabv3_resnet101':
+        model = torchvision.models.segmentation.__dict__[args.model](
+                    pretrained=True,
+                    aux_loss=args.aux_loss,
+                )        
+        model.classifier = torchvision.models.segmentation.deeplabv3.DeepLabHead(2048, args.num_classes)
+        model.aux_classifier[4] = torch.nn.Conv2d(256, args.num_classes, kernel_size=(1, 1), stride=(1, 1))
 
     checkpoint = torch.load(args.weights, map_location="cpu")
     model.load_state_dict(checkpoint["model"], strict=True)
@@ -135,7 +132,7 @@ if __name__ == "__main__":
 
     parser.add_argument('--model', default='deeplabv3_resnet101', help='model name')
     parser.add_argument("--pretrained", default=True)
-    parser.add_argument('--num-classes', default=8, type=int, help='number of classes')
+    parser.add_argument('--num-classes', default=6, type=int, help='number of classes')
     parser.add_argument('--base-imgsz', default=1280, type=int, help='base image size')
     parser.add_argument('--crop-imgsz', default=1280, type=int, help='base image size')
     parser.add_argument('--output-dir', default='./outputs/libtorch')

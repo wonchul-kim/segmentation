@@ -120,7 +120,7 @@ def main(args):
         collate_fn=utils.collate_fn, drop_last=True)
 
     data_loader_test = torch.utils.data.DataLoader(
-        dataset_test, batch_size=args.batch_size,#1,
+        dataset_test, batch_size=1,
         sampler=test_sampler, num_workers=args.num_workers,
         collate_fn=utils.collate_fn)
 
@@ -211,7 +211,10 @@ def main(args):
     ### SET WANDB ---------------------------------------------------------------------------------------------------------------------
     if args.wandb:
         wandb.init(project=args.project_name, reinit=True)
-        wandb.run.name = args.run_name + '_' + args.model
+        if args.data_path.split('/')[-2].split('_')[-1] == 'good' or args.with_good:
+            wandb.run.name = args.run_name + '_' + args.model + '_good'
+        else:    
+            wandb.run.name = args.run_name + '_' + args.model
         wandb.config.update(args)
         wandb.watch(model)
 
@@ -280,12 +283,13 @@ def get_args_parser(add_help=True):
     parser.add_argument('--project-name', default='INTEROJO_S_Factory')
     # parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust')
     parser.add_argument('--data-path', default='/home/nvadmin/wonchul/mnt/HDD/datasets/projects/interojo/S_factory/coco_datasets_good/DUST_BUBBLE_DAMAGE_EDGE_RING_LINE_OVERLAP', help='dataset path')
+    parser.add_argument('--good', action='store_true')
     # parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/S_factory/coco_datasets_good/DUST_BUBBLE_DAMAGE_EDGE_RING_LINE_OVERLAP', help='dataset path')
     parser.add_argument('--wandb', action='store_true')
     parser.add_argument('--dataset-type', default='coco', help='dataset name')
 
     # Model setting
-    parser.add_argument("--model", default="deeplabv3_resnet101", type=str, 
+    parser.add_argument("--model", default="deeplabv3_mobilenet_v3_large", type=str, 
             help="For torchvision,  deeplabv3_resnet50 | deeplabv3_resnet101 | deeplabv3_mobilenet_v3_large | lraspp_mobilenet_v3_large" +
                  "For UNet**, NestedUNet | UNet")
     parser.add_argument("--pretrained", default=True)
@@ -303,10 +307,10 @@ def get_args_parser(add_help=True):
     parser.add_argument('--device-ids', default='0,1', help='gpu device ids')
     
     # training parameters
-    parser.add_argument("--batch-size", default=4, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
+    parser.add_argument("--batch-size", default=16, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
     parser.add_argument("--start-epoch", default=0, type=int, metavar="N", help="start epoch")
     
-    parser.add_argument("--epochs", default=300, type=int, metavar="N", help="number of total epochs to run")
+    parser.add_argument("--epochs", default=600, type=int, metavar="N", help="number of total epochs to run")
     parser.add_argument('--dataparallel', action='store_true')
     parser.add_argument("--num-workers", default=32, type=int, metavar="N", help="number of data loading workers (default: 16)")
 
@@ -386,6 +390,8 @@ if __name__ == "__main__":
         sys.exit(0)
 
     cudnn.benchmark = True ## ??????????????????????????????????????????????????????????
+
+    print(args.data_path.split('/')[-2].split('_')[-1])
 
     if args.distributed:
         mp.spawn(main, nprocs=len(args.device_ids), args=args)
