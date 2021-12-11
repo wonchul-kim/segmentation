@@ -1,9 +1,9 @@
 import torch
 import transforms_ as T
-
+from torchvision import transforms
 
 class SegmentationPresetTrain:
-    def __init__(self, base_size, crop_size, hflip_prob=0.5, vflip_prob=0.5, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)):
+    def __init__(self, base_size, crop_size, hflip_prob=0.5, vflip_prob=0.5, rotate_prob=0.5, elastic_prob=0.2, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)):
         min_size = int(0.5 * base_size)
         max_size = int(2.0 * base_size)
 
@@ -12,12 +12,15 @@ class SegmentationPresetTrain:
             trans.append(T.RandomHorizontalFlip(hflip_prob))
         if vflip_prob > 0:
             trans.append(T.RandomHorizontalFlip(vflip_prob))
+        if rotate_prob > 0:
+            trans.append(T.RandomRotate(rotate_prob))
+        if elastic_prob > 0:
+            trans.append(T.DoubleElasticTransform(elastic_prob))
         trans.extend(
             [
                 T.RandomCrop(crop_size),
                 T.PILToTensor(),
                 T.ConvertImageDtype(torch.float),
-                T.DoubleElasticTransform(),
                 T.Normalize(mean=mean, std=std),
             ]
         )

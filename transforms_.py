@@ -105,6 +105,20 @@ class RandomVerticalFlip(object):
     def __repr__(self):
         return self.__class__.__name__ + f'(p={self.vflip_prob})'
 
+class RandomRotate(object):
+    def __init__(self, rotate_prob):
+        self.rotate_prob = rotate_prob
+
+    def __call__(self, image, target):
+        p = random.random()
+        if p < self.rotate_prob:
+            deg = random.uniform(0, 180)
+            image = F.rotate(image, deg, Image.BILINEAR)
+            target = F.rotate(target, deg, Image.BILINEAR)
+
+        return image, target
+
+
 
 class RandomCrop(object):
     def __init__(self, size):
@@ -199,18 +213,19 @@ class DoubleElasticTransform:
     """Based on implimentation on
     https://gist.github.com/erniejunior/601cdf56d2b424757de5"""
 
-    def __init__(self, alpha=250, sigma=10, p=0.5, seed=None, randinit=True):
+    def __init__(self, prob=0.2, alpha=250, sigma=10, seed=None, randinit=True):
         if not seed:
             seed = random.randint(1, 100)
         self.random_state = np.random.RandomState(seed)
         self.alpha = alpha
         self.sigma = sigma
-        self.p = p
+        self.prob = prob
         self.randinit = randinit
+        
 
 
     def __call__(self, image, mask, weight=None):
-        if random.random() < self.p:
+        if random.random() < self.prob:
             if self.randinit:
                 seed = random.randint(1, 100)
                 self.random_state = np.random.RandomState(seed)

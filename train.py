@@ -19,6 +19,7 @@ import json
 import datetime 
 import wandb
 import collections
+import matplotlib.pyplot as plt 
 
 ### moduel 
 from models.models import CreateModel
@@ -75,6 +76,10 @@ def train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, devi
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value}"))
     header = f"Epoch: [{epoch}]"
     for image, target, fn in metric_logger.log_every(data_loader, print_freq, header):
+
+        plt.imshow(image[0].permute(1, 2, 0).detach().numpy())
+        plt.imshow(target[0].unsqueeze(0).permute(1, 2, 0).detach().numpy(), alpha=0.8)
+        plt.show()
         image, target = image.to(device), target.to(device)
 
         output = model(image)
