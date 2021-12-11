@@ -289,7 +289,7 @@ def get_args_parser(add_help=True):
     parser.add_argument('--dataset-type', default='coco', help='dataset name')
 
     # Model setting
-    parser.add_argument("--model", default="deeplabv3_mobilenet_v3_large", type=str, 
+    parser.add_argument("--model", default="lraspp_mobilenet_v3_large", type=str, 
             help="For torchvision,  deeplabv3_resnet50 | deeplabv3_resnet101 | deeplabv3_mobilenet_v3_large | lraspp_mobilenet_v3_large" +
                  "For UNet**, NestedUNet | UNet")
     parser.add_argument("--pretrained", default=True)
@@ -304,10 +304,10 @@ def get_args_parser(add_help=True):
     
     # device
     parser.add_argument('--device', default='cuda', help='gpu device ids')
-    parser.add_argument('--device-ids', default='0,1', help='gpu device ids')
+    parser.add_argument('--device-ids', default='2,3', help='gpu device ids')
     
     # training parameters
-    parser.add_argument("--batch-size", default=16, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
+    parser.add_argument("--batch-size", default=32, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
     parser.add_argument("--start-epoch", default=0, type=int, metavar="N", help="start epoch")
     
     parser.add_argument("--epochs", default=600, type=int, metavar="N", help="number of total epochs to run")

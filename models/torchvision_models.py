@@ -16,7 +16,7 @@ def torchvision_models(args):
                 model.aux_classifier[4] = torch.nn.Conv2d(10, args.num_classes, kernel_size=(1, 1), stride=(1, 1))
         elif args.model == 'lraspp_mobilenet_v3_large': 
             model = torchvision.models.segmentation.__dict__[args.model](pretrained=args.pretrained)
-            model.classifier = torchvision.models.segmentation.lraspp.LRASPPHead(40, 960, 6, 128)
+            model.classifier = torchvision.models.segmentation.lraspp.LRASPPHead(40, 960, args.num_classes, 128)
     else:
         model = torchvision.models.segmentation.__dict__[args.model](
             pretrained=args.pretrained,
