@@ -209,7 +209,7 @@ class Normalize:
         image = F.normalize(image, mean=self.mean, std=self.std)
         return image, target
 
-class DoubleElasticTransform:
+class ElasticTransform:
     """Based on implimentation on
     https://gist.github.com/erniejunior/601cdf56d2b424757de5"""
 
@@ -222,14 +222,12 @@ class DoubleElasticTransform:
         self.prob = prob
         self.randinit = randinit
         
-
-
     def __call__(self, image, mask, weight=None):
         if random.random() < self.prob:
             if self.randinit:
                 seed = random.randint(1, 100)
                 self.random_state = np.random.RandomState(seed)
-                self.alpha = random.uniform(100, 300)
+                self.alpha = random.uniform(10, 50)
                 self.sigma = random.uniform(10, 15)
 
             dim = image.shape
