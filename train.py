@@ -289,7 +289,7 @@ def get_args_parser(add_help=True):
     parser.add_argument('--dataset-type', default='coco', help='dataset name')
 
     # Model setting
-    parser.add_argument("--model", default="lraspp_mobilenet_v3_large", type=str, 
+    parser.add_argument("--model", default="deeplabv3_mobilenet_v3_large", type=str, 
             help="For torchvision,  deeplabv3_resnet50 | deeplabv3_resnet101 | deeplabv3_mobilenet_v3_large | lraspp_mobilenet_v3_large" +
                  "For UNet**, NestedUNet | UNet")
     parser.add_argument("--pretrained", default=True)
