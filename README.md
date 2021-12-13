@@ -5,7 +5,7 @@
 - [ ] distributed mode to use gpu fully and fairly
 - [ ] add loss functions
 - [ ] add other architectures
-
+- [ ] add datasets format such as mask
 
 ### Available models
 

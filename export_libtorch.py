@@ -11,12 +11,17 @@ import torch
 import torch.utils.data
 from torch import nn
 import torchvision
+from torchvision import transforms
 
 from coco_utils import get_coco
 import presets
 import utils
 from tqdm import tqdm
-from torchvision import transforms
+
+### moduel 
+from models.models import CreateModel
+
+
 import seaborn as sns 
 import matplotlib.pyplot as plt 
 import matplotlib 
@@ -43,70 +48,70 @@ IDS = [0, 64, 96, 128, 192, 248]
 VALUES = [0., 1., 2., 3., 4., 5.]
 t2l = { val : id_ for val, id_ in zip(VALUES, IDS) }
 
+class wrapper(torch.nn.Module):
+    def __init__(self, model):
+        super(wrapper, self).__init__()
+        self.model = model
 
-def export(model, transform, device, num_classes, output_dir):
+    def forward(self, input):
+        results = []
+        output = self.model(input)
+
+        for k, v in output.items():
+            results.append(v)
+            return results
+
+def export(model, transform, device, args):
     model.eval()
 
     with torch.no_grad():
-        img_file = './images/bubbles.jpg'
-        fname = osp.split(osp.splitext(img_file)[0])[-1]
-        
-        img = Image.open(img_file).convert("RGB")
-        _img = copy.deepcopy(img)
-        _img = _img.resize((1280, 1280))
-        # img = cv2.resize(img, (1280, 1280))
-        # _img = copy.deepcopy(img)
-        # img = transforms.ToTensor()(img)
-        img = transform(img)
-        img = torch.unsqueeze(img, 0)
-        img = img.to(device)
+        img_files = glob.glob(osp.join('./images', '*.jpg'))
+        for img_file in tqdm(img_files):
+            fname = osp.split(osp.splitext(img_file)[0])[-1]
+            
+            img = Image.open(img_file).convert("RGB")
+            _img = copy.deepcopy(img)
+            _img = _img.resize((1280, 1280))
+            # img = cv2.resize(img, (1280, 1280))
+            # _img = copy.deepcopy(img)
+            # img = transforms.ToTensor()(img)
+            img = transform(img)
+            img = torch.unsqueeze(img, 0)
+            img = img.to(device)
 
-        output = model(img)[0]
-        # print(output)
-        # print(len(output))
-        # output = output['out']
+            output = model(img)[0]
+            # print(output)
+            # print(len(output))
+            # output = output['out']
 
-        preds = torch.nn.functional.softmax(output, dim=1)
-        preds_labels = torch.argmax(preds, dim=1)
-        preds_labels = preds_labels.float()
-        # print("* pred size: ", preds_labels.size())
-        
-        # for x in range(preds_labels.size(1)):
-        #     for y in range(preds_labels.size(2)):
-        #         if preds_labels[0][x][y].cpu().detach().item() != 0.0:
+            preds = torch.nn.functional.softmax(output, dim=1)
+            preds_labels = torch.argmax(preds, dim=1)
+            preds_labels = preds_labels.float()
+            # print("* pred size: ", preds_labels.size())
+            
+            # for x in range(preds_labels.size(1)):
+            #     for y in range(preds_labels.size(2)):
+            #         if preds_labels[0][x][y].cpu().detach().item() != 0.0:
 
-        preds_labels = preds_labels.to('cpu')
-        _, x, y = preds_labels.size()
-        preds_labels.apply_(lambda x: t2l[x])
-        # preds_labels = transforms.Resize((1100, 1200), interpolation=Image.NEAREST)(preds_labels)
-        # print(preds_labels.size(), np.unique(preds_labels.cpu()))
-        
-        preds_labels = np.array(transforms.ToPILImage()(preds_labels[0].byte()))
+            preds_labels = preds_labels.to('cpu')
+            _, x, y = preds_labels.size()
+            preds_labels.apply_(lambda x: t2l[x])
+            # preds_labels = transforms.Resize((1100, 1200), interpolation=Image.NEAREST)(preds_labels)
+            # print(preds_labels.size(), np.unique(preds_labels.cpu()))
+            
+            preds_labels = np.array(transforms.ToPILImage()(preds_labels[0].byte()))
 
-        fig = plt.figure(dpi=150)
-        plt.imshow(_img)
-        plt.imshow(preds_labels, alpha=0.8)
-        plt.xlabel("pred")
-        plt.savefig(os.path.join('./images/pred_bubbles.png'))
-        plt.close()
+            fig = plt.figure(dpi=150)
+            plt.imshow(_img)
+            plt.imshow(preds_labels, alpha=0.8)
+            plt.xlabel("pred")
+            plt.savefig(os.path.join(args.data_path, 'res', osp.split(osp.splitext(img_file)[0])[-1] + '_pred.jpg'))
+            plt.close()
 
         traced_script_module = torch.jit.trace(model, (img))
-        traced_script_module.save(osp.join(output_dir, 'libtorch_segmentation.pt'))
+        traced_script_module.save(osp.join(args.output_dir, 'libtorch_segmentation.pt'))
 
 def main(args):
-    class wrapper(torch.nn.Module):
-        def __init__(self, model):
-            super(wrapper, self).__init__()
-            self.model = model
-
-        def forward(self, input):
-            results = []
-            output = self.model(input)
-
-            for k, v in output.items():
-                results.append(v)
-                return results
-
     device = torch.device(args.device)
 
     model, params_to_optimize = CreateModel(args)
@@ -127,7 +132,11 @@ def main(args):
         T.Normalize_(mean=mean, std=std),
     ])
 
-    export(model, transform=transform, device=device, num_classes=6, output_dir=args.output_dir)
+    if not osp.exists(osp.join(args.data_path, 'res')):
+        os.mkdir(osp.join(args.data_path, 'res'))
+        args.data_path = osp.join(args.data_path, 'res')
+
+    export(model, transform=transform, device=device, args=args)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='')
@@ -135,6 +144,7 @@ if __name__ == "__main__":
 
     parser.add_argument('--model', default='deeplabv3_resnet101', help='model name')
     parser.add_argument("--pretrained", default=True)
+    parser.add_argument('--data-path', default='./images', help='dataset path')
     parser.add_argument('--num-classes', default=8, type=int, help='number of classes')
     parser.add_argument('--base-imgsz', default=1280, type=int, help='base image size')
     parser.add_argument('--crop-imgsz', default=1280, type=int, help='base image size')
@@ -143,7 +153,7 @@ if __name__ == "__main__":
     parser.add_argument('--device', default='cuda', help='device')
     parser.add_argument('--num-workers', default=16, type=int, metavar='N',
                         help='number of data loading workers (default: 16)')
-    parser.add_argument('--weights', default='./outputs/train/seg1/weights/last.pth')
+    parser.add_argument('--weights', default='./outputs/train/seg7/weights/last.pth')
 
     args = parser.parse_args()
 

@@ -236,7 +236,7 @@ if __name__ == "__main__":
     parser.add_argument('--device', default='cuda', help='device')
     parser.add_argument('--num-workers', default=16, type=int, metavar='N',
                         help='number of data loading workers (default: 16)')
-    parser.add_argument('--weights', default='./outputs/train/seg8/weights/best.pth')
+    parser.add_argument('--weights', default='./outputs/train/seg2/weights/best.pth')
 
     args = parser.parse_args()
 
