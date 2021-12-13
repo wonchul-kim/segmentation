@@ -290,7 +290,7 @@ def get_args_parser(add_help=True):
     parser.add_argument('--project-name', default='INTEROJO_S_Factory')
     # parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/S_factory/coco_datasets_good/DUST_BUBBLE_DAMAGE_EDGE_RING_LINE_OVERLAP', help='dataset path')
     parser.add_argument('--data-path', default='/home/nvadmin/wonchul/mnt/HDD/datasets/projects/interojo/S_factory/coco_datasets_good/DUST_BUBBLE_DAMAGE_EDGE_RING_LINE_OVERLAP', help='dataset path')
-    parser.add_argument('--good', action='store_true')
+    parser.add_argument('--with-good', action='store_true')
     parser.add_argument('--wandb', action='store_true')
     parser.add_argument('--dataset-type', default='coco', help='dataset name')
 
@@ -321,8 +321,8 @@ def get_args_parser(add_help=True):
     parser.add_argument("--num-workers", default=32, type=int, metavar="N", help="number of data loading workers (default: 16)")
 
     # optimizer & lr 
-    parser.add_argument("--lr", default=0.05, type=float, help="initial learning rate")
-    parser.add_argument("--lr-warmup-epochs", default=10, type=int, help="the number of epochs to warmup (default: 0)")
+    parser.add_argument("--lr", default=0.01, type=float, help="initial learning rate")
+    parser.add_argument("--lr-warmup-epochs", default=30, type=int, help="the number of epochs to warmup (default: 0)")
     parser.add_argument("--lr-warmup-method", default="linear", type=str, help="the warmup method (default: linear)")
     parser.add_argument("--lr-warmup-decay", default=0.01, type=float, help="the decay for lr")
     
