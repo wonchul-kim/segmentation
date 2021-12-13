@@ -1,6 +1,10 @@
 import datetime
 import os
 import os.path as osp
+import sys 
+sys.path.append(osp.join(osp.dirname(__file__), 'src'))
+sys.path.append(osp.join(osp.dirname(__file__), 'models'))
+
 import time
 import json
 import torch
@@ -16,9 +20,12 @@ from torchvision import transforms
 import seaborn as sns 
 import matplotlib.pyplot as plt 
 import matplotlib 
-from losses import auxiliar_loss, DiceLoss
-from models.torchvision_models import torchvision_models
-from models.unetpp import UNet, NestedUNet
+
+### moduel 
+from models.models import CreateModel
+
+from losses  import CELoss, DiceLoss
+
 import argparse
 import numpy as np
 from PIL import Image
@@ -28,8 +35,6 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # os.environ['CUDA_VISIBLE_DEVICES'] = '1'
-
-
 
 def get_dataset(dir_path, dataset_type, mode, transform, num_classes):
     paths = {
@@ -203,14 +208,12 @@ def main(args):
         sampler=test_sampler, num_workers=args.num_workers,
         collate_fn=utils.collate_fn)
 
-    if args.model_name == 'deeplabv3_resnet101':
-        model = torchvision_models(args.model_name, args.pretrained, args.loss, args.num_classes)
+    model, params_to_optimize = CreateModel(args)
 
-    # checkpoint = torch.load(args.weights, map_location='cpu')
-    # model.load_state_dict(checkpoint['model'], strict=True)
+    checkpoint = torch.load(args.weights, map_location="cpu")
+    model.load_state_dict(checkpoint["model"], strict=True)
+    print(">>>> RELOAD ALL !!!!!!!!!!!!!!!!!!!!!!!!!!")    # model.load_state_dict(checkpoint['model'], strict=True)
 
-    model = torch.load(args.weights)
-    print(">>> Loaded the model: ", args.weights)
     model.to(device)
 
     confmat = evaluate(args, model, data_loader_test, device=device, num_classes=args.num_classes, output_dir=args.output_dir)
@@ -220,11 +223,12 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='')
 
-    parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust')
+    parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/S_factory/coco_datasets_good/DUST_BUBBLE_DAMAGE_EDGE_RING_LINE_OVERLAP', help='dataset path')
     parser.add_argument('--dataset-type', default='coco', help='dataset name')
-    parser.add_argument('--model-name', default='deeplabv3_resnet101', help='model name')
+    parser.add_argument('--model', default='deeplabv3_resnet101', help='model name')
+    parser.add_argument("--aux-loss", action="store_true", help="auxiliar loss")
     parser.add_argument("--pretrained", default=True)
-    parser.add_argument('--num-classes', default=6, type=int, help='number of classes')
+    parser.add_argument('--num-classes', default=8, type=int, help='number of classes')
     parser.add_argument('--base-imgsz', default=1280, type=int, help='base image size')
     parser.add_argument('--crop-imgsz', default=1280, type=int, help='base image size')
     parser.add_argument('--output-dir', default='./outputs/val')
@@ -232,7 +236,7 @@ if __name__ == "__main__":
     parser.add_argument('--device', default='cuda', help='device')
     parser.add_argument('--num-workers', default=16, type=int, metavar='N',
                         help='number of data loading workers (default: 16)')
-    parser.add_argument('--weights', default='./outputs/train/2/weights/deeplabv3_resnet101_checkpoint_best.pt')
+    parser.add_argument('--weights', default='./outputs/train/seg8/weights/best.pth')
 
     args = parser.parse_args()
 

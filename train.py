@@ -76,10 +76,9 @@ def train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, devi
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value}"))
     header = f"Epoch: [{epoch}]"
     for image, target, fn in metric_logger.log_every(data_loader, print_freq, header):
-
-        plt.imshow(image[0].permute(1, 2, 0).detach().numpy())
-        plt.imshow(target[0].unsqueeze(0).permute(1, 2, 0).detach().numpy(), alpha=0.8)
-        plt.show()
+        # plt.imshow(image[0].permute(1, 2, 0).detach().numpy())
+        # plt.imshow(target[0].unsqueeze(0).permute(1, 2, 0).detach().numpy(), alpha=0.8)
+        # plt.show()
         image, target = image.to(device), target.to(device)
 
         output = model(image)
@@ -187,18 +186,21 @@ def main(args):
         warmup_iters = iters_per_epoch * args.lr_warmup_epochs
         args.lr_warmup_method = args.lr_warmup_method.lower()
         if args.lr_warmup_method == "linear":
-            warmup_lr_scheduler = torch.optim.lr_scheduler.LinearLR(
+            # warmup_lr_scheduler = torch.optim.lr_scheduler.LinearLR(
+            warmup_lr_scheduler = utils.LinearLR(
                 optimizer, start_factor=args.lr_warmup_decay, total_iters=warmup_iters
             )
         elif args.lr_warmup_method == "constant":
-            warmup_lr_scheduler = torch.optim.lr_scheduler.ConstantLR(
+            # warmup_lr_scheduler = torch.optim.lr_scheduler.ConstantLR(
+            warmup_lr_scheduler = utils.ConstantLR(
                 optimizer, factor=args.lr_warmup_decay, total_iters=warmup_iters
             )
         else:
             raise RuntimeError(
                 f"Invalid warmup lr method '{args.lr_warmup_method}'. Only linear and constant are supported."
             )
-        lr_scheduler = torch.optim.lr_scheduler.SequentialLR(
+        # lr_scheduler = torch.optim.lr_scheduler.SequentialLR(
+        lr_scheduler = utils.SequentialLR(
             optimizer, schedulers=[warmup_lr_scheduler, main_lr_scheduler], milestones=[warmup_iters]
         )
     else:
@@ -286,21 +288,20 @@ def get_args_parser(add_help=True):
     parser = argparse.ArgumentParser(description="PyTorch based semantic segmentation", add_help=add_help)
     
     parser.add_argument('--project-name', default='INTEROJO_S_Factory')
-    # parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/3rd_poc_/coco_datasets_good/react_bubble_damage_print_dust')
+    # parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/S_factory/coco_datasets_good/DUST_BUBBLE_DAMAGE_EDGE_RING_LINE_OVERLAP', help='dataset path')
     parser.add_argument('--data-path', default='/home/nvadmin/wonchul/mnt/HDD/datasets/projects/interojo/S_factory/coco_datasets_good/DUST_BUBBLE_DAMAGE_EDGE_RING_LINE_OVERLAP', help='dataset path')
     parser.add_argument('--good', action='store_true')
-    # parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/S_factory/coco_datasets_good/DUST_BUBBLE_DAMAGE_EDGE_RING_LINE_OVERLAP', help='dataset path')
     parser.add_argument('--wandb', action='store_true')
     parser.add_argument('--dataset-type', default='coco', help='dataset name')
 
     # Model setting
-    parser.add_argument("--model", default="deeplabv3_mobilenet_v3_large", type=str, 
+    parser.add_argument("--model", default="deeplabv3_resnet101", type=str, 
             help="For torchvision,  deeplabv3_resnet50 | deeplabv3_resnet101 | deeplabv3_mobilenet_v3_large | lraspp_mobilenet_v3_large" +
                  "For UNet**, NestedUNet | UNet")
     parser.add_argument("--pretrained", default=True)
     parser.add_argument("--weights", default=None, type=str, help="the weights to load")
     parser.add_argument("--input-channels", default=3)
-    parser.add_argument('--base-imgsz', default=1280, type=int, help='base image size')
+    parser.add_argument('--base-imgsz', default=1440, type=int, help='base image size')
     parser.add_argument('--crop-imgsz', default=1280, type=int, help='base image size')
 
     # loss
@@ -309,19 +310,19 @@ def get_args_parser(add_help=True):
     
     # device
     parser.add_argument('--device', default='cuda', help='gpu device ids')
-    parser.add_argument('--device-ids', default='2,3', help='gpu device ids')
+    parser.add_argument('--device-ids', default='0,1', help='gpu device ids')
     
     # training parameters
-    parser.add_argument("--batch-size", default=32, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
+    parser.add_argument("--batch-size", default=4, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
     parser.add_argument("--start-epoch", default=0, type=int, metavar="N", help="start epoch")
     
-    parser.add_argument("--epochs", default=600, type=int, metavar="N", help="number of total epochs to run")
+    parser.add_argument("--epochs", default=800, type=int, metavar="N", help="number of total epochs to run")
     parser.add_argument('--dataparallel', action='store_true')
     parser.add_argument("--num-workers", default=32, type=int, metavar="N", help="number of data loading workers (default: 16)")
 
     # optimizer & lr 
-    parser.add_argument("--lr", default=0.01, type=float, help="initial learning rate")
-    parser.add_argument("--lr-warmup-epochs", default=0, type=int, help="the number of epochs to warmup (default: 0)")
+    parser.add_argument("--lr", default=0.05, type=float, help="initial learning rate")
+    parser.add_argument("--lr-warmup-epochs", default=10, type=int, help="the number of epochs to warmup (default: 0)")
     parser.add_argument("--lr-warmup-method", default="linear", type=str, help="the warmup method (default: linear)")
     parser.add_argument("--lr-warmup-decay", default=0.01, type=float, help="the decay for lr")
     
