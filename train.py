@@ -49,7 +49,7 @@ def get_transform(train, base_size, crop_size):
     return presets.SegmentationPresetTrain(base_size, crop_size) if train else presets.SegmentationPresetEval(base_size)
 
 
-def evaluate(model, criterion, data_loader, device, num_classes, wandb=None):
+def evaluate(model, criterion, data_loader, device, num_classes, deep_supervision, wandb=None):
     model.eval()
     confmat = utils.ConfusionMatrix(num_classes)
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -58,9 +58,15 @@ def evaluate(model, criterion, data_loader, device, num_classes, wandb=None):
         for image, target, fn in metric_logger.log_every(data_loader, 100, header):
             image, target = image.to(device), target.to(device)
 
-            output = model(image)
-
-            loss = criterion(output, target)
+            if deep_supervision:
+                outputs = model(image)
+                loss = 0
+                for output in outputs:
+                    loss += criterion(output, target)
+                loss /= len(outputs)
+            else:
+                output = model(image)
+                loss = criterion(output, target)
             if isinstance(output, collections.OrderedDict) and 'out' in output.keys():
                 output = output['out']
 
@@ -70,7 +76,7 @@ def evaluate(model, criterion, data_loader, device, num_classes, wandb=None):
     return confmat, loss
 
 
-def train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, device, epoch, print_freq, wandb=None):
+def train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, device, epoch, print_freq, deep_supervision, wandb=None):
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value}"))
@@ -81,9 +87,16 @@ def train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, devi
         # plt.show()
         image, target = image.to(device), target.to(device)
 
-        output = model(image)
         
-        loss = criterion(output, target)
+        if deep_supervision: 
+            outputs = model(image)     
+            loss = 0
+            for output in outputs:
+                loss += criterion(output, target)
+            loss /= len(outputs)
+        else:
+            output = model(image)     
+            loss = criterion(output, target)
 
         optimizer.zero_grad()
 
@@ -235,8 +248,10 @@ def main(args):
         if args.distributed:
             train_sampler.set_epoch(epoch)
         if args.wandb:
-            train_one_epoch(model, criterion, optimizer, data_loader_train, lr_scheduler, args.device, epoch, args.print_freq, wandb)
-            confmat, loss_val = evaluate(model, criterion, data_loader_test, device=args.device, num_classes=num_classes)
+            train_one_epoch(model, criterion, optimizer, data_loader_train, lr_scheduler, args.device, epoch, 
+                                                                    args.print_freq, args.deep_supervision, wandb)
+            confmat, loss_val = evaluate(model, criterion, data_loader_test, device=args.device, num_classes=num_classes, 
+                                                                                        deep_supervision=args.deep_supervision)
             
             acc_global, acc, iu = confmat.compute()
             wandb.log({"val_loss": loss_val.item()})
@@ -248,8 +263,10 @@ def main(args):
                 wandb.log({class_name + '_acc': val})
             
         else:
-            train_one_epoch(model, criterion, optimizer, data_loader_train, lr_scheduler, args.device, epoch, args.print_freq, None)
-            confmat, loss_val = evaluate(model, criterion, data_loader_test, device=args.device, num_classes=num_classes, wandb=None)
+            train_one_epoch(model, criterion, optimizer, data_loader_train, lr_scheduler, args.device, epoch, args.print_freq, 
+                                                                                                                args.deep_supervision, None)
+            confmat, loss_val = evaluate(model, criterion, data_loader_test, device=args.device, num_classes=num_classes, 
+                                                                                                deep_supervision=args.deep_supervision, wandb=None)
         
         print(args.classes)
         print(confmat)
@@ -288,24 +305,24 @@ def get_args_parser(add_help=True):
     parser = argparse.ArgumentParser(description="PyTorch based semantic segmentation", add_help=add_help)
     
     parser.add_argument('--project-name', default='INTEROJO_S_Factory')
-    # parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/S_factory/coco_datasets_good/DUST_BUBBLE_DAMAGE_EDGE_RING_LINE_OVERLAP', help='dataset path')
-    parser.add_argument('--data-path', default='/home/nvadmin/wonchul/mnt/HDD/datasets/projects/interojo/S_factory/coco_datasets_good/DUST_BUBBLE_DAMAGE_EDGE_RING_LINE_OVERLAP', help='dataset path')
+    parser.add_argument('--data-path', default='/home/wonchul/HDD/datasets/projects/interojo/S_factory_ver2/coco_datasets_good/DUST', help='dataset path')
+    # parser.add_argument('--data-path', default='/home/nvadmin/wonchul/mnt/HDD/datasets/projects/interojo/S_factory/coco_datasets_good/DUST_BUBBLE_DAMAGE_EDGE_RING_LINE_OVERLAP', help='dataset path')
     parser.add_argument('--with-good', action='store_true')
     parser.add_argument('--wandb', action='store_true')
     parser.add_argument('--dataset-type', default='coco', help='dataset name')
 
     # Model setting
-    parser.add_argument("--model", default="deeplabv3_resnet101", type=str, 
+    parser.add_argument("--model", default="NestedUNet", type=str, 
             help="For torchvision,  deeplabv3_resnet50 | deeplabv3_resnet101 | deeplabv3_mobilenet_v3_large | lraspp_mobilenet_v3_large" +
                  "For UNet**, NestedUNet | UNet")
     parser.add_argument("--pretrained", default=True)
     parser.add_argument("--weights", default=None, type=str, help="the weights to load")
     parser.add_argument("--input-channels", default=3)
-    parser.add_argument('--base-imgsz', default=1440, type=int, help='base image size')
-    parser.add_argument('--crop-imgsz', default=1280, type=int, help='base image size')
+    parser.add_argument('--base-imgsz', default=160, type=int, help='base image size')
+    parser.add_argument('--crop-imgsz', default=160, type=int, help='base image size')
 
     # loss
-    parser.add_argument("--loss", default='DiceLoss', help='CE | DiceLoss | BceDiceLoss')
+    parser.add_argument("--loss", default='BceDiceLoss', help='CE | DiceLoss | BceDiceLoss')
     parser.add_argument("--aux-loss", action="store_true", help="auxiliar loss")
     
     # device
@@ -313,7 +330,7 @@ def get_args_parser(add_help=True):
     parser.add_argument('--device-ids', default='0,1', help='gpu device ids')
     
     # training parameters
-    parser.add_argument("--batch-size", default=4, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
+    parser.add_argument("--batch-size", default=1, type=int, help="images per gpu, the total batch size is $NGPU x batch_size")
     parser.add_argument("--start-epoch", default=0, type=int, metavar="N", help="start epoch")
     
     parser.add_argument("--epochs", default=800, type=int, metavar="N", help="number of total epochs to run")
@@ -355,6 +372,15 @@ def get_args_parser(add_help=True):
 if __name__ == "__main__":
     args = get_args_parser().parse_args()
 
+    if args.deep_supervision and (args.model != "NestedUNet" or args.model != "UNet"):
+        print("*** ERROR: Deep supervision option can be applied with NestedUNet or UNet !!!!!!!")
+        sys.exit(0)
+
+    if args.model == "NestedUNet" or args.model == "UNet":
+        if args.crop_imgsz/160 != 0:
+            print("*** ERROR: UNet and NestedUNet should have image size multiplied by 160 !!!!!!!")
+            sys.exit(0)
+
     args.device_ids = list(map(int, args.device_ids.split(',')))
 
     args.world_size = len(args.device_ids)*args.world_size
@@ -392,7 +418,7 @@ if __name__ == "__main__":
     print(args)
 
     if args.distributed and args.dataparallel:
-        print("ERROR: Distributed mode cannot be executed with Dataparallel mode .......!")
+        print("*** ERROR: Distributed mode cannot be executed with Dataparallel mode .......!")
         sys.exit(0)
 
     cudnn.benchmark = True ## ??????????????????????????????????????????????????????????

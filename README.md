@@ -36,3 +36,5 @@
     > `BceDiceLoss` is used in the paper.
 
     > Consider `deep-supervision` argument for NestedUnet
+
+    > The input image size should be multiple of 160
