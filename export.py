@@ -44,10 +44,6 @@ warnings.filterwarnings("ignore")
 
 # os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
-IDS = [0, 64, 96, 128, 192, 248]
-VALUES = [0., 1., 2., 3., 4., 5.]
-t2l = { val : id_ for val, id_ in zip(VALUES, IDS) }
-
 class wrapper(torch.nn.Module):
     def __init__(self, model):
         super(wrapper, self).__init__()
@@ -61,7 +57,7 @@ class wrapper(torch.nn.Module):
             results.append(v)
             return results
 
-def export_libtorch(model, transform, device, args):
+def export_libtorch(model, transform, device, t2l, args):
     model.eval()
 
     with torch.no_grad():
@@ -129,11 +125,18 @@ def main(args):
         T.Normalize_(mean=mean, std=std),
     ])
 
+    IDS, VALUES = [], []
+    for idx in range(args.num_classes):
+        VALUES.append(idx)
+        IDS.append(250/(args.num_classes - 1)*idx)
+
+    t2l = { val : id_ for val, id_ in zip(VALUES, IDS) }
+
     if not osp.exists(osp.join(args.data_path, 'res')):
         os.mkdir(osp.join(args.data_path, 'res'))
         args.data_path = osp.join(args.data_path, 'res')
 
-    export_libtorch(model, transform=transform, device=device, args=args)
+    export_libtorch(model, transform=transform, device=device, t2l=t2l, args=args)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='')
