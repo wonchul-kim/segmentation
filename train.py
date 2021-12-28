@@ -373,13 +373,11 @@ if __name__ == "__main__":
     args = get_args_parser().parse_args()
 
     if args.deep_supervision and (args.model != "NestedUNet" or args.model != "UNet"):
-        print("*** ERROR: Deep supervision option can be applied with NestedUNet or UNet !!!!!!!")
-        sys.exit(0)
+        raise RuntimeError("Deep supervision option can be applied with NestedUNet or UNet !!!!!!!")
 
     if args.model == "NestedUNet" or args.model == "UNet":
         if args.crop_imgsz/160 != 0:
-            print("*** ERROR: UNet and NestedUNet should have image size multiplied by 160 !!!!!!!")
-            sys.exit(0)
+            raise RuntimeError("UNet and NestedUNet should have image size multiplied by 160 !!!!!!!")
 
     args.device_ids = list(map(int, args.device_ids.split(',')))
 
@@ -418,8 +416,7 @@ if __name__ == "__main__":
     print(args)
 
     if args.distributed and args.dataparallel:
-        print("*** ERROR: Distributed mode cannot be executed with Dataparallel mode .......!")
-        sys.exit(0)
+        raise RuntimeError("Distributed mode cannot be executed with Dataparallel mode .......!")
 
     cudnn.benchmark = True ## ??????????????????????????????????????????????????????????
 

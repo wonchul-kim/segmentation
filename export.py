@@ -61,7 +61,7 @@ class wrapper(torch.nn.Module):
             results.append(v)
             return results
 
-def export(model, transform, device, args):
+def export_libtorch(model, transform, device, args):
     model.eval()
 
     with torch.no_grad():
@@ -71,18 +71,12 @@ def export(model, transform, device, args):
             
             img = Image.open(img_file).convert("RGB")
             _img = copy.deepcopy(img)
-            _img = _img.resize((1280, 1280))
-            # img = cv2.resize(img, (1280, 1280))
-            # _img = copy.deepcopy(img)
-            # img = transforms.ToTensor()(img)
+            _img = _img.resize((args.crop_imgsz, args.crop_imgsz))
             img = transform(img)
             img = torch.unsqueeze(img, 0)
             img = img.to(device)
 
             output = model(img)[0]
-            # print(output)
-            # print(len(output))
-            # output = output['out']
 
             preds = torch.nn.functional.softmax(output, dim=1)
             preds_labels = torch.argmax(preds, dim=1)
@@ -109,7 +103,10 @@ def export(model, transform, device, args):
             plt.close()
 
         traced_script_module = torch.jit.trace(model, (img))
-        traced_script_module.save(osp.join(args.output_dir, 'libtorch_segmentation.pt'))
+        cfg = {"shape": img.shape, "classes": args.classes}
+        print(cfg)
+        extra_files = {'config': json.dumps(cfg)}  # torch._C.ExtraFilesMap()
+        traced_script_module.save(osp.join(args.output_dir, 'libtorch_segmentation.pt'), _extra_files=extra_files)
 
 def main(args):
     device = torch.device(args.device)
@@ -127,7 +124,7 @@ def main(args):
     std=(0.229, 0.224, 0.225)
 
     transform = T.Compose_([
-        T.RandomResize_(args.base_imgsz, args.base_imgsz),
+        T.RandomResize_(args.crop_imgsz, args.crop_imgsz),
         T.ToTensor_(),
         T.Normalize_(mean=mean, std=std),
     ])
@@ -136,7 +133,7 @@ def main(args):
         os.mkdir(osp.join(args.data_path, 'res'))
         args.data_path = osp.join(args.data_path, 'res')
 
-    export(model, transform=transform, device=device, args=args)
+    export_libtorch(model, transform=transform, device=device, args=args)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='')
@@ -145,17 +142,23 @@ if __name__ == "__main__":
     parser.add_argument('--model', default='deeplabv3_resnet101', help='model name')
     parser.add_argument("--pretrained", default=True)
     parser.add_argument('--data-path', default='./images', help='dataset path')
-    parser.add_argument('--num-classes', default=8, type=int, help='number of classes')
-    parser.add_argument('--base-imgsz', default=1280, type=int, help='base image size')
-    parser.add_argument('--crop-imgsz', default=1280, type=int, help='base image size')
-    parser.add_argument('--output-dir', default='./outputs/libtorch')
     parser.add_argument("--aux-loss", action="store_true", help="auxiliar loss")
     parser.add_argument('--device', default='cuda', help='device')
     parser.add_argument('--num-workers', default=16, type=int, metavar='N',
                         help='number of data loading workers (default: 16)')
-    parser.add_argument('--weights', default='./outputs/train/seg7/weights/last.pth')
+    parser.add_argument('--output-dir', default='./outputs/libtorch')
+    parser.add_argument("--input_dir", default='./outputs/train/seg11')
+    
 
     args = parser.parse_args()
+
+    args.weights = osp.join(args.input_dir, 'weights/last.pth')
+    with open(osp.join(args.input_dir, 'cfg/config.json')) as cfg_file:
+        json_data = json.load(cfg_file)
+        args.classes = list(osp.split(osp.splitext(json_data['data_path'])[0])[-1].split("_"))
+        args.base_imgsz = json_data['base_imgsz']
+        args.crop_imgsz = json_data['crop_imgsz']
+        args.num_classes = len(args.classes) + 1
 
     if args.output_dir:
         if not os.path.exists(args.output_dir):
